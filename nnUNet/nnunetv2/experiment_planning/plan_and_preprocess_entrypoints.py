@@ -62,8 +62,14 @@ def plan_experiment_entry():
                              'differently named plans file such that the nnunet default plans are not '
                              'overwritten. You will then need to specify your custom plans file with -p whenever '
                              'running other nnunet commands (training, inference etc)')
+    parser.add_argument('-model', default='unet_se', required=False,
+                        help='[OPTIONAL] DANGER ZONE! If you used -gpu_memory_target, -preprocessor_name or '
+                             '-overwrite_target_spacing it is best practice to use -overwrite_plans_name to generate a '
+                             'differently named plans file such that the nnunet default plans are not '
+                             'overwritten. You will then need to specify your custom plans file with -p whenever '
+                             'running other nnunet commands (training, inference etc)')
     args, unrecognized_args = parser.parse_known_args()
-    plan_experiments(args.d, args.pl, args.gpu_memory_target, args.preprocessor_name, args.overwrite_target_spacing,
+    plan_experiments(args.d, args.model, args.gpu_memory_target, args.preprocessor_name, args.overwrite_target_spacing,
                      args.overwrite_plans_name)
 
 
@@ -124,10 +130,6 @@ def plan_and_preprocess_entry():
                         help='[OPTIONAL] Set this flag to overwrite existing fingerprints. If this flag is not set and a '
                              'fingerprint already exists, the fingerprint extractor will not run. REQUIRED IF YOU '
                              'CHANGE THE DATASET FINGERPRINT EXTRACTOR OR MAKE CHANGES TO THE DATASET!')
-    parser.add_argument('-pl', type=str, default='ExperimentPlanner', required=False,
-                        help='[OPTIONAL] Name of the Experiment Planner class that should be used. Default is '
-                             '\'ExperimentPlanner\'. Note: There is no longer a distinction between 2d and 3d planner. '
-                             'It\'s an all in one solution now. Wuch. Such amazing.')
     parser.add_argument('-gpu_memory_target', default=None, type=float, required=False,
                         help='[OPTIONAL] DANGER ZONE! Sets a custom GPU memory target (in GB). Default: None (=Planner '
                              'class default is used). Changing this will '
@@ -170,6 +172,7 @@ def plan_and_preprocess_entry():
                              "RAM available. Image resampling takes up a lot of RAM. MONITOR RAM USAGE AND "
                              "DECREASE -np IF YOUR RAM FILLS UP TOO MUCH!. Default: 8 processes for 2d, 4 "
                              "for 3d_fullres, 8 for 3d_lowres and 4 for everything else")
+    parser.add_argument('-model', type=str,default='unet_se',required=False,help='currently supports unet_se and unet_sefc this is for selecting the appropriate experiment planner')
     parser.add_argument('--verbose', required=False, action='store_true',
                         help='Set this to print a lot of stuff. Useful for debugging. Will disable progress bar! '
                              'Recommended for cluster environments')
@@ -181,7 +184,7 @@ def plan_and_preprocess_entry():
 
     # experiment planning
     print('Experiment planning...')
-    plans_identifier = plan_experiments(args.d, args.pl, args.gpu_memory_target, args.preprocessor_name,
+    plans_identifier = plan_experiments(args.d, args.model, args.gpu_memory_target, args.preprocessor_name,
                                         args.overwrite_target_spacing, args.overwrite_plans_name)
 
     # manage default np

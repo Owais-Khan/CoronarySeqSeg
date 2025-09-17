@@ -1,26 +1,3 @@
-"""
-Graph builder + ECC (NNConv) edge classifier for vessel reconstruction.
-- Builds nodes from probability/segmentation + tangent-guided growth near vessels.
-- Builds edges via kNN + gap proposals (endpoint↔endpoint).
-- Labels edges using GT-restricted shortest paths (no skeletons).
-- Trains ECC+MLP edge classifier and exports predicted graphs to VTP.
-
-This version:
-- Removes dependence on the raw image (uses only probability/seg volumes).
-- Major speedups:
-  * Optional GPU line integrals via torch.grid_sample (fallback to SciPy).
-  * Optional GPU kNN via torch-cluster (fallback to cKDTree).
-  * Adaptive sampling for line integrals by edge length.
-  * Early-stop during growth rays.
-  * Grid hashing for fast gap pairs.
-  * Tangents from EDT gradient (no per-node SVD).
-
-Fixes:
-- Forces contiguous NumPy arrays before torch.from_numpy (avoids negative strides).
-- Safer AMP contexts (PyTorch 2.6+).
-- Checkpoint stores in/out dims for robust reload.
-"""
-
 from __future__ import annotations
 import os, glob, time
 from dataclasses import dataclass
@@ -47,29 +24,10 @@ import networkx as nx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-try:
-    from torch_geometric.data import Data
-    from torch_geometric.loader import DataLoader as GeoDataLoader
-    from torch_geometric.nn import SplineConv
-except Exception as e:
-    raise RuntimeError(
-        "torch_geometric (with SplineConv) is required. Install a version matching your PyTorch/CUDA.\n"
-        f"Original error: {e}"
-    )
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader as GeoDataLoader
+from torch_geometric.nn import SplineConv
 
-# ---- Deep Learning / GNN ----
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-try:
-    from torch_geometric.data import Data
-    from torch_geometric.loader import DataLoader as GeoDataLoader
-    from torch_geometric.nn import NNConv
-except Exception as e:
-    raise RuntimeError(
-        "torch_geometric (with NNConv) is required. Install a version matching your PyTorch/CUDA.\n"
-        f"Original error: {e}"
-    )
 
 # ---- Optional GPU kNN (torch-cluster) ----
 _USE_TORCH_CLUSTER = True
@@ -83,12 +41,7 @@ except Exception:
 
 # ---- Optional GPU line integrals via grid_sample ----
 _USE_TORCH_SAMPLER = True
-try:
-    _ = torch.ones(1, device="cuda" if torch.cuda.is_available() else "cpu")
-except Exception:
-    _USE_TORCH_SAMPLER = False
 
-# ---- VTK export (optional) ----
 try:
     import vtk
     _HAVE_VTK = True
@@ -96,9 +49,7 @@ except Exception:
     _HAVE_VTK = False
 
 
-# =========================
-# Config
-# =========================
+#Config
 @dataclass
 class CFG:
     # I/O
@@ -173,10 +124,10 @@ class CFG:
     export_predicted_vtp: bool = True
 
     belt_shells_mm: Tuple[float, ...] = (0.8, 1.6, 2.4, -0.6)  # +ve outside, -ve slight inside
-    belt_step_mm: float = 1.0  # target physical spacing of belt samples
-    belt_prob_max: float = 0.50  # accept only if prob <= this (focus on gaps)
-    belt_vesselness_min: float = 0.12  # accept only if LoG(prob) >= this
-    belt_band_half_mm: float = 0.5  # thickness around each shell
+    belt_step_mm: float = 1.0
+    belt_prob_max: float = 0.50
+    belt_vesselness_min: float = 0.12
+    belt_band_half_mm: float = 0.5
     belt_nms_vox: Tuple[int, int, int] = (1, 1, 1)
     belt_max_points: int = 20000
 
@@ -250,63 +201,7 @@ def _in_bounds_zyx(coords: np.ndarray, shape_zyx: Tuple[int,int,int]) -> np.ndar
            (coords[:,2] >= 0) & (coords[:,2] < X)
 
 
-#spread nodes around the vessel structure to find missing links or branches
-def belt_nodes_from_edt_and_vesselness(
-    pred_np: np.ndarray,
-    pred_thr: np.ndarray,
-    edt_outside_mm: np.ndarray,
-    vess_np: np.ndarray,
-    sitk_img: sitk.Image,
-    shells_mm: Tuple[float, ...],
-    target_step_mm: float,
-    prob_max: float,
-    vesselness_min: float,
-    band_half_mm: float,
-    nms_vox: Tuple[int,int,int],
-    max_points: int
-) -> np.ndarray:
-    sp_zyx = get_spacing_zyx(sitk_img)
-    step_zyx = _mm_to_step_zyx(float(target_step_mm), sp_zyx)
-    Z,Y,X = pred_np.shape
-    picked = []
 
-    edt_inside_mm = distance_transform_edt(pred_thr, sampling=sitk_img.GetSpacing()[::-1]).astype(np.float32)
-
-    for sh in shells_mm:
-        if sh > 0:
-            band = (~pred_thr) & (np.abs(edt_outside_mm - float(sh)) <= float(band_half_mm))
-        else:
-            sh_abs = abs(float(sh))
-            band = (pred_thr) & (np.abs(edt_inside_mm - sh_abs) <= float(band_half_mm))
-
-        if not np.any(band):
-            continue
-
-        # Gating by probability and vesselness
-        band &= (pred_np <= float(prob_max)) & (vess_np >= float(vesselness_min))
-        if not np.any(band):
-            continue
-
-        coords = voxel_sample_coords(band, step_zyx)
-        if coords.size:
-            picked.append(coords)
-
-    if not picked:
-        return np.zeros((0,3), np.int64)
-
-    coords = np.unique(np.vstack(picked), axis=0)
-    # Tight NMS in voxels
-    coords = nms_coords(coords, radius_vox=nms_vox)
-
-    if coords.shape[0] > int(max_points):
-        # Poisson-like thinning via simple striding
-        idx = np.linspace(0, coords.shape[0]-1, int(max_points)).astype(int)
-        coords = coords[idx]
-    return np.ascontiguousarray(coords, dtype=np.int64)
-
-# =========================
-# Triplet matching
-# =========================
 def match_triplets(images_dir: str, labels_dir: str, preds_dir: str, pattern: str) -> List[Tuple[str,str,str]]:
     def stem(p: str) -> str:
         s = os.path.basename(p)
@@ -338,9 +233,7 @@ def match_triplets(images_dir: str, labels_dir: str, preds_dir: str, pattern: st
     return out
 
 
-# =========================
-# Geometry / graph utils
-# =========================
+
 def voxel_to_phys(coords_zyx: np.ndarray, img: sitk.Image) -> np.ndarray:
     sp = np.asarray(img.GetSpacing(), dtype=np.float64)  # (x,y,z)
     org = np.asarray(img.GetOrigin(), dtype=np.float64)
@@ -733,23 +626,12 @@ def seed_endpoints_along_tangents_gated(
     return np.ascontiguousarray(out, dtype=np.int64)
 
 
-# =========================
-# Node builder (prob-only)
-# =========================
 
-# =========================
-# Node builder (prob-only)
-# =========================
 def build_nodes(pred_np: np.ndarray, sitk_img: sitk.Image, cfg: CFG):
-    # Threshold & optional shell dilation
     pred_thr = (pred_np > float(cfg.prob_threshold))
     if cfg.include_shell_dilate_vox > 0:
         pred_thr = binary_dilation(pred_thr, iterations=int(cfg.include_shell_dilate_vox))
-
-    # Inside-pred grid nodes
     coords_in = voxel_sample_coords(pred_thr, cfg.voxel_subsample_zyx)
-
-    # Fallback if seg is empty: use LoG(prob) peaks
     if coords_in.size == 0:
         resp = -gaussian_laplace(pred_np.astype(np.float32), sigma=1.0)
         k = max(1024, int(20 * (resp.size / 1e6)))
@@ -767,12 +649,12 @@ def build_nodes(pred_np: np.ndarray, sitk_img: sitk.Image, cfg: CFG):
                 np.ascontiguousarray(pos_mm, dtype=np.float32),
                 np.ascontiguousarray(tang, dtype=np.float32))
 
-    # Shared maps
+
     edt_inside  = distance_transform_edt(pred_thr,  sampling=sitk_img.GetSpacing()[::-1]).astype(np.float32)
     edt_outside = distance_transform_edt(~pred_thr, sampling=sitk_img.GetSpacing()[::-1]).astype(np.float32)
     vess_np     = prob_ridge_log(pred_np, floor=cfg.vesselness_floor)
 
-    # Tangents for inside nodes (from EDT gradient)
+
     tang_in = tangents_from_edt(edt_inside, coords_in)
 
     # Grow candidates near the inside core (dir-guided)
@@ -874,11 +756,7 @@ def build_nodes(pred_np: np.ndarray, sitk_img: sitk.Image, cfg: CFG):
             np.ascontiguousarray(pos_mm, dtype=np.float32),
             np.ascontiguousarray(tang, dtype=np.float32))
 
-# =========================
 
-# =========================
-# Edge features (optional line-integrals)
-# =========================
 def affine_xyz_to_index(img: sitk.Image):
     sp = np.asarray(img.GetSpacing(), dtype=np.float64)      # (sx,sy,sz)
     org = np.asarray(img.GetOrigin(), dtype=np.float64)      # (ox,oy,oz)
@@ -896,22 +774,16 @@ def line_integrals_torch(pos_idx_xyz: np.ndarray,
                          n: int,
                          device: Optional[torch.device] = None,
                          batch_edges: int = 4096) -> np.ndarray:
-    """
-    Vectorized line sampling via torch.grid_sample (trilinear).
-    - Correct 5D grid shape: [N, D_out, H_out, W_out, 3]  (we use W_out=1, H_out=1).
-    - Batches edges to control memory.
-    """
     if edges.shape[1] == 0:
         return np.zeros((0,), np.float32)
 
     dev = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-    vol = torch.from_numpy(vol_zyx.astype(np.float32))[None, None].to(dev)  # [1,1,Z,Y,X]
+    vol = torch.from_numpy(vol_zyx.astype(np.float32))[None, None].to(dev)
     Z, Y, X = vol_zyx.shape
     u, v = edges
-    P0 = torch.from_numpy(pos_idx_xyz[u].astype(np.float32)).to(dev)  # [E,3] (x,y,z)
+    P0 = torch.from_numpy(pos_idx_xyz[u].astype(np.float32)).to(dev)
     P1 = torch.from_numpy(pos_idx_xyz[v].astype(np.float32)).to(dev)
 
-    # parameter along the line
     t = torch.linspace(0, 1, int(n), device=dev).view(n, 1, 1)  # [n,1,1]
 
     E = P0.shape[0]
@@ -1143,7 +1015,7 @@ class EdgeNet(nn.Module):
         self.out_ch = out_ch
     def forward(self, edge_attr):
         return self.mlp(edge_attr)
-# ---- keep your existing imports, but ensure SplineConv is imported ----
+
 # from torch_geometric.nn import SplineConv
 
 class ECCEdgeClassifier(nn.Module):
@@ -2034,7 +1906,6 @@ def main():
             dt = time.time() - t0
             print(f"Epoch {epoch:03d} | loss {tr_loss:.4f} | {dt:.1f}s")
 
-            # Save last & best — store dims for robust reload
             ckpt = {'model_state': model.state_dict(),
                     'cfg': cfg.__dict__,
                     'in_node': in_node,

@@ -5,8 +5,7 @@ from typing import List, Union, Tuple
 import numpy as np
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, save_json, isfile, maybe_mkdir_p
-from nnUNet.nnunetv2.new_architectures.unet_se import PlainConvUNet_se
-from nnUNet.nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
+from nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
 
 from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_instancenorm
 
@@ -51,7 +50,7 @@ class ExperimentPlanner(object):
         self.anisotropy_threshold = ANISO_THRESHOLD
 
         self.UNet_base_num_features = 32
-        self.UNet_class = PlainConvUNet_se
+        self.UNet_class = PlainConvUNet_sefc
         # the following two numbers are really arbitrary and were set to reproduce nnU-Net v1's configurations as
         # much as possible
         self.UNet_reference_val_3d = 560000000  # 455600128  550000000
@@ -101,7 +100,7 @@ class ExperimentPlanner(object):
                                    arch_kwargs: dict,
                                    arch_kwargs_req_import: Tuple[str, ...]):
         """
-        Works for PlainConvUNet, ResidualEncoderUNet
+        Works for PlainConvUNet_se, PlainConvUNet_sefc
         """
         a = torch.get_num_threads()
         torch.set_num_threads(get_allowed_n_proc_DA())
@@ -279,7 +278,7 @@ class ExperimentPlanner(object):
         num_stages = len(pool_op_kernel_sizes)
 
         norm = get_matching_instancenorm(unet_conv_op)
-        network_class_name='PlainConvUNet_se'
+        network_class_name='PlainConvUNet_sefc'
 
         architecture_kwargs = {
             'network_class_name': self.UNet_class.__module__ + '.' + self.UNet_class.__name__,
@@ -599,4 +598,4 @@ def _maybe_copy_splits_file(splits_file: str, target_fname: str):
 
 
 if __name__ == '__main__':
-    ExperimentPlanner(8, 4).plan_experiment()
+    ExperimentPlanner(8, 1).plan_experiment()

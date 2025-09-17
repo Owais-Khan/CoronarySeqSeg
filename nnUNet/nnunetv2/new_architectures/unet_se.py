@@ -90,20 +90,7 @@ class ConvDropoutNormReLU(nn.Module):
         return np.prod([self.output_channels, *output_size], dtype=np.int64)
 
 
-# --- End of Placeholders ---
 
-# --- MONAI/Training Script related imports ---
-from torch.utils.data import DataLoader, random_split
-
-
-# from monai.losses import DiceCELoss  # Assuming MONAI is installed for this
-# from monai.data import list_data_collate, decollate_batch
-# from torch.amp import autocast, GradScaler
-# from monai.transforms import AsDiscrete  # Assuming MONAI is installed
-# from monai.metrics import DiceMetric  # Assuming MONAI is installed
-
-
-# --- SEBlock3D Module ---
 class SEBlock3D(nn.Module):
     def __init__(self, channels: int, reduction_ratio: int = 16, conv_op: Type[_ConvNd] = nn.Conv3d):
         super(SEBlock3D, self).__init__()

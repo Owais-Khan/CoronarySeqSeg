@@ -6,13 +6,30 @@ from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkd
 import nnunetv2
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.experiment_planning.dataset_fingerprint.fingerprint_extractor import DatasetFingerprintExtractor
-from nnunetv2.experiment_planning.experiment_planners.modified_experiment_planner import ExperimentPlanner
 from nnunetv2.experiment_planning.verify_dataset_integrity import verify_dataset_integrity
 from nnunetv2.paths import nnUNet_raw, nnUNet_preprocessed
 from nnunetv2.utilities.dataset_name_id_conversion import convert_id_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 from nnunetv2.utilities.utils import get_filenames_of_train_images_and_targets
+
+
+def select_experiment_planner(model:str):
+    if model=='unet_se':
+        print(f'planning for {model}')
+        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_se import ExperimentPlanner
+    elif model=='unet_sefc':
+        print(f'planning for {model}')
+        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_sefc import ExperimentPlanner
+    elif model=='base_nnunet':
+        print(f'planning for {model}')
+        from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
+    else:
+        from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
+        print('Model not recognized falliing back to default nnunet')
+    return ExperimentPlanner
+
+
 
 
 def extract_fingerprint_dataset(dataset_id: int,
@@ -49,7 +66,7 @@ def extract_fingerprints(dataset_ids: List[int], fingerprint_extractor_class_nam
 
 
 def plan_experiment_dataset(dataset_id: int,
-                            experiment_planner_class: Type[ExperimentPlanner] = ExperimentPlanner,
+                            model:str='unet_se',
                             gpu_memory_target_in_gb: float = None, preprocess_class_name: str = 'DefaultPreprocessor',
                             overwrite_target_spacing: Optional[Tuple[float, ...]] = None,
                             overwrite_plans_name: Optional[str] = None) -> Tuple[dict, str]:
@@ -62,6 +79,8 @@ def plan_experiment_dataset(dataset_id: int,
     if gpu_memory_target_in_gb is not None:
         kwargs['gpu_memory_target_in_gb'] = gpu_memory_target_in_gb
 
+    experiment_planner_class=select_experiment_planner(model)
+
     planner = experiment_planner_class(dataset_id,
                                        preprocessor_name=preprocess_class_name,
                                        overwrite_target_spacing=[float(i) for i in overwrite_target_spacing] if
@@ -73,25 +92,16 @@ def plan_experiment_dataset(dataset_id: int,
     return ret, planner.plans_identifier
 
 
-def plan_experiments(dataset_ids: List[int], experiment_planner_class_name: str = 'ExperimentPlanner',
+def plan_experiments(dataset_ids: List[int], model:str='unet_se',
                      gpu_memory_target_in_gb: float = None, preprocess_class_name: str = 'DefaultPreprocessor',
                      overwrite_target_spacing: Optional[Tuple[float, ...]] = None,
                      overwrite_plans_name: Optional[str] = None):
     """
     overwrite_target_spacing ONLY applies to 3d_fullres and 3d_cascade fullres!
     """
-    if experiment_planner_class_name == 'ExperimentPlanner':
-        print("\n############################\n"
-              "INFO: You are using the old nnU-Net default planner. We have updated our recommendations. "
-              "Please consider using those instead! "
-              "Read more here: https://github.com/MIC-DKFZ/nnUNet/blob/master/documentation/resenc_presets.md"
-              "\n############################\n")
-    experiment_planner = recursive_find_python_class(join(nnunetv2.__path__[0], "experiment_planning"),
-                                                     experiment_planner_class_name,
-                                                     current_module="nnunetv2.experiment_planning")
     plans_identifier = None
     for d in dataset_ids:
-        _, plans_identifier = plan_experiment_dataset(d, experiment_planner, gpu_memory_target_in_gb,
+        _, plans_identifier = plan_experiment_dataset(d, model, gpu_memory_target_in_gb,
                                                       preprocess_class_name,
                                                       overwrite_target_spacing, overwrite_plans_name)
     return plans_identifier

@@ -17,28 +17,15 @@ from scipy.ndimage import distance_transform_edt, map_coordinates
 from SeqSeg.seqseg.modules.centerline import post_process_centerline
 from SeqSeg.seqseg.modules.vtk_functions import write_vtk_polydata
 
-# =========================
-# ECC model wrappers (yours)
-# =========================
-from gnn_model import gm_load, gm_predict_graph, save_predicted_graph_to_vtp
-
-# =========================
-# Optional heavy deps
-# =========================
+from gnn_model.gnn_model import gm_load, gm_predict_graph, save_predicted_graph_to_vtp
 try:
     import skfmm
 except Exception as e:
     raise RuntimeError("skfmm is required for local FMM centerline bootstrap") from e
 
-# =========================
-# Graph-driven tracer (your graph-based SeqSeg loop)
-# =========================
-from seqseg_built_from_scratch.trace_centerline import trace_centerline  # <- graph-guided version
 
+from seqseg_modules_modified.trace_centerline import trace_centerline
 
-# =========================
-# Configuration
-# =========================
 class CFG:
     # I/O
     DATA_DIR: str = r'C:\Users\priya\PycharmProjects\nnunet-setup\testing'
@@ -51,7 +38,7 @@ class CFG:
     # SeqSeg nnU-Net fold
     fold: int = 5
 
-    # ECC graph settidongs
+    # ECC graph settings
     knn_k: int = 12
     knn_radius_mm: float = 6.0
     edge_prob_thresh: float = 0.5
@@ -66,11 +53,11 @@ class CFG:
     min_target_sep_mm: float = 9.0
     spur_len_min_mm: float = 9.0
     prob_min: float = 0.6
-    prob_exp: float = 9
+    prob_exp: float = 1.5
 
     # Tracer limits (defaults; most are read from YAML)
     MAX_STEP_SIZE: int = 10
-    MAX_N_STEPS_PER_BRANCH: int = 4000
+    MAX_N_STEPS_PER_BRANCH: int = 1200
 
 
 cfg = CFG()
@@ -174,9 +161,6 @@ def largest_components(G: nx.Graph, k: int = 1, *, by: str = "nodes") -> List[nx
     return [G.subgraph(c).copy() for c in comps[:max(1, int(k))]]
 
 
-# =========================
-# Graph features / seeds & targets
-# =========================
 def _edge_length_mm_from_phys(G: nx.Graph, u, v, pos_phys_key='pos_phys') -> float:
     pu = np.asarray(G.nodes[u][pos_phys_key], float)
     pv = np.asarray(G.nodes[v][pos_phys_key], float)
@@ -286,180 +270,72 @@ def select_seed_and_targets_from_features(Gc: nx.Graph,
     if max_targets and max_targets > 0:
         ranked = ranked[:max_targets]
     return seed, ranked
-from scipy.ndimage import distance_transform_edt
-from scipy.spatial import cKDTree as KDTree
 
-def graph_corridor_mask_zyx(Gc: nx.Graph, cropped_img: sitk.Image,
-                            start_xyz: Tuple[int,int,int], size_xyz: Tuple[int,int,int],
-                            pos_idx_key: str = 'pos_idx_xyz', radius_mm: float = 2.0) -> np.ndarray:
-    """
-    Returns a Z,Y,X boolean mask of voxels within 'radius_mm' of graph nodes inside the ROI.
-    Uses one EDT on a sparse seed image (very fast).
-    """
-    sz_zyx = np.array(cropped_img.GetSize(), int)[::-1]
-    seeds = np.zeros(sz_zyx, np.uint8)  # Z,Y,X
-    for n, d in Gc.nodes(data=True):
-        if pos_idx_key not in d:
-            continue
-        gx, gy, gz = np.asarray(d[pos_idx_key], int)  # global X,Y,Z
-        lx, ly, lz = gx - start_xyz[0], gy - start_xyz[1], gz - start_xyz[2]
-        if 0 <= lz < sz_zyx[0] and 0 <= ly < sz_zyx[1] and 0 <= lx < sz_zyx[2]:
-            seeds[lz, ly, lx] = 1
-    if seeds.max() == 0:
-        return np.zeros_like(seeds, bool)
-
-    # EDT distance to nearest graph node (in mm). Trick: distance from zeros → put nodes as 0s.
-    bg = np.ones_like(seeds, np.uint8)
-    bg[seeds == 1] = 0
-    dist_mm = distance_transform_edt(bg, sampling=cropped_img.GetSpacing()[::-1])
-    return (dist_mm <= float(radius_mm))
-
-
-# =========================
-# FMM centerline (local bootstrap)
-# =========================
-STEP_MM   = 0.5
-JUMP_MM   = 1.0
-LEAK_FRAC = 0.05
-GRAD_FLOOR = 1e-6
-MAX_ITERS  = 4000
-TT_MARGIN  = 1e-6
-
-def _idx_from_phys(img: sitk.Image, p_phys_xyz: np.ndarray) -> np.ndarray:
-    return np.array(img.TransformPhysicalPointToContinuousIndex(p_phys_xyz))[::-1]
-
-def _phys_from_idx(img: sitk.Image, cont_zyx: np.ndarray) -> np.ndarray:
-    return np.array(img.TransformContinuousIndexToPhysicalPoint(cont_zyx[::-1].tolist()))
 
 def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
-                       gradient_field: list[np.ndarray], reference_image: sitk.Image,
-                       travel_time: np.ndarray | None = None,
-                       *,
-                       graph_kd_phys: KDTree | None = None,  # <— NEW (optional)
-                       graph_jump_mm: float = 1.5) -> list[np.ndarray]:
-    path = [np.array(start_point_phys, float)]
-    cur  = np.array(start_point_phys, float)
-    spacing = np.array(reference_image.GetSpacing(), float)
-    mean_sp = float(np.mean(spacing))
-    step_idx = STEP_MM / mean_sp
-    jump_idx = JUMP_MM / mean_sp
-    graph_jump_idx = graph_jump_mm / mean_sp
-
-    for _ in range(MAX_ITERS):
-        if np.linalg.norm(cur - end_point_phys) <= mean_sp:
+                       gradient_field: List[np.ndarray], reference_image: sitk.Image) -> List[np.ndarray]:
+    path = [np.array(start_point_phys)]
+    current_pos_phys = np.array(start_point_phys)
+    spacing = np.array(reference_image.GetSpacing())
+    for _ in range(4000):
+        if np.linalg.norm(current_pos_phys - end_point_phys) < np.mean(spacing):
             break
-
-        cur_zyx = _idx_from_phys(reference_image, cur)
-        gz = map_coordinates(gradient_field[0], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
-        gy = map_coordinates(gradient_field[1], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
-        gx = map_coordinates(gradient_field[2], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
-        g = np.array([gz, gy, gx], float)
-        gnorm = float(np.linalg.norm(g))
-
-        moved = False
-        if gnorm > GRAD_FLOOR:
-            new_zyx = cur_zyx + (-g / gnorm) * step_idx
-            if travel_time is None:
-                cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy()); moved = True
-            else:
-                T_cur = float(map_coordinates(travel_time, cur_zyx.reshape(3,1),  order=1, mode='nearest')[0])
-                T_new = float(map_coordinates(travel_time, new_zyx.reshape(3,1), order=1, mode='nearest')[0])
-                if T_new <= T_cur - TT_MARGIN:
-                    cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy()); moved = True
-
-        if not moved:
-            # 1) try a tiny jump toward the goal
-            end_zyx = _idx_from_phys(reference_image, end_point_phys)
-            d = end_zyx - cur_zyx; dn = np.linalg.norm(d)
-            if dn > 1e-9:
-                new_zyx = cur_zyx + (d / dn) * jump_idx
-                cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy())
-                moved = True
-
-        if not moved and graph_kd_phys is not None:
-            # 2) if still stuck, snap toward nearest graph node (≤ graph_jump_mm)
-            dist, idx = graph_kd_phys.query(cur, k=1)
-            if np.isfinite(dist) and dist <= graph_jump_mm:
-                # move part-way toward that node (stays smooth)
-                target_phys = graph_kd_phys.data[idx]
-                v = target_phys - cur
-                vn = np.linalg.norm(v)
-                if vn > 1e-9:
-                    step = min(graph_jump_mm, vn)
-                    cur = cur + (v / vn) * step
-                    path.append(cur.copy())
-                    moved = True
-
-        if not moved:
-            break
-
-    path.append(np.array(end_point_phys, float))
+        continuous_idx_xyz = reference_image.TransformPhysicalPointToContinuousIndex(current_pos_phys)
+        current_continuous_idx_zyx = np.array(continuous_idx_xyz)[::-1]
+        grad_z = map_coordinates(gradient_field[0], current_continuous_idx_zyx.reshape(3, 1), order=1, mode='nearest')[0]
+        grad_y = map_coordinates(gradient_field[1], current_continuous_idx_zyx.reshape(3, 1), order=1, mode='nearest')[0]
+        grad_x = map_coordinates(gradient_field[2], current_continuous_idx_zyx.reshape(3, 1), order=1, mode='nearest')[0]
+        grad_zyx = np.array([grad_z, grad_y, grad_x])
+        grad_norm = np.linalg.norm(grad_zyx)
+        if grad_norm > 1e-8:
+            step_in_idx_space = -grad_zyx / grad_norm * 0.5
+            new_continuous_idx_zyx = current_continuous_idx_zyx + step_in_idx_space
+            current_pos_phys = np.array(
+                reference_image.TransformContinuousIndexToPhysicalPoint(new_continuous_idx_zyx[::-1].tolist())
+            )
+        path.append(current_pos_phys)
+    path.append(np.array(end_point_phys))
     return path
 
 
-from scipy.ndimage import gaussian_filter
+def trace_centerline_fmm(vessel_mask_np: np.ndarray, seed_coords_vox_zyx: np.ndarray,
+                         target_coords_list_vox_zyx: List[np.ndarray], reference_image: sitk.Image) -> nx.Graph:
+    speed_image = distance_transform_edt(vessel_mask_np) + 1e-6
+    masked_speed = np.ma.masked_array(speed_image, mask=~vessel_mask_np.astype(bool))
+    phi = np.ones_like(vessel_mask_np, dtype=float)
+    phi[int(seed_coords_vox_zyx[0]), int(seed_coords_vox_zyx[1]), int(seed_coords_vox_zyx[2])] = -1.0
+    travel_time = skfmm.travel_time(phi, speed=masked_speed, dx=reference_image.GetSpacing()[::-1])
+    gradient = np.gradient(travel_time)
 
-def trace_centerline_fmm(vessel_mask_np: np.ndarray,
-                         seed_coords_vox_zyx: np.ndarray,
-                         target_coords_list_vox_zyx: list[np.ndarray],
-                         reference_image: sitk.Image,
-                         *,
-                         corridor_mask_zyx: np.ndarray | None = None,   # <— NEW
-                         graph_kd_phys: KDTree | None = None            # <— NEW
-                         ) -> nx.Graph:
-    mask = vessel_mask_np.astype(bool)
-    edt  = distance_transform_edt(mask)
-    speed = np.full_like(edt, 1e-8, dtype=float)  # near-zero default
+    seed_phys = np.array(reference_image.TransformIndexToPhysicalPoint(seed_coords_vox_zyx[::-1].tolist()))
+    targets_phys = [np.array(reference_image.TransformIndexToPhysicalPoint(np.asarray(t_vox)[::-1].tolist()))
+                    for t_vox in target_coords_list_vox_zyx]
 
-    # high speed inside vessel, moderate in corridor, tiny elsewhere
-    if mask.any():
-        med_in = float(np.median((edt + 1e-6)[mask]))
-    else:
-        med_in = 1.0
-    speed[mask] = edt[mask] + 1e-6
-    if corridor_mask_zyx is not None:
-        speed[~mask & corridor_mask_zyx] = max(1e-6, med_in * LEAK_FRAC)
+    final_graph, node_counter, node_map = nx.Graph(), 0, {}
+    for target_phys in targets_phys:
+        path = backtrack_gradient(target_phys, seed_phys, gradient, reference_image)
+        if len(path) < 2:
+            continue
+        path_node_ids = []
+        for point_phys_xyz in path:
+            point_tuple = tuple(point_phys_xyz)
+            if point_tuple not in node_map:
+                voxel_idx_xyz = reference_image.TransformPhysicalPointToIndex(point_phys_xyz)
+                pos_vox_zyx = np.array(voxel_idx_xyz)[::-1]
+                pos_vox_zyx = np.clip(pos_vox_zyx, 0, np.array(speed_image.shape) - 1).astype(int)
+                final_graph.add_node(node_counter, pos_phys=np.asarray(point_phys_xyz, float), pos=pos_vox_zyx)
+                node_map[point_tuple] = node_counter
+                path_node_ids.append(node_counter)
+                node_counter += 1
+            else:
+                path_node_ids.append(node_map[point_tuple])
+        for i in range(len(path_node_ids) - 1):
+            u, v = path_node_ids[i], path_node_ids[i + 1]
+            if u != v and not final_graph.has_edge(u, v):
+                dist = np.linalg.norm(final_graph.nodes[u]['pos_phys'] - final_graph.nodes[v]['pos_phys'])
+                final_graph.add_edge(u, v, length_mm=float(dist))
+    return final_graph
 
-    speed = gaussian_filter(speed, sigma=0.6)
-
-    phi = np.ones_like(speed, float)
-    sz, sy, sx = [int(np.clip(v, 0, s-1)) for v, s in zip(seed_coords_vox_zyx, speed.shape)]
-    phi[sz, sy, sx] = -1.0
-
-    travel_time = skfmm.travel_time(phi, speed=speed, dx=reference_image.GetSpacing()[::-1])
-    gradient = np.gradient(travel_time)  # z,y,x
-
-    seed_phys = np.array(reference_image.TransformIndexToPhysicalPoint(seed_coords_vox_zyx[::-1].tolist()), float)
-    targets_phys = [np.array(reference_image.TransformIndexToPhysicalPoint(np.asarray(t)[::-1].tolist()), float)
-                    for t in target_coords_list_vox_zyx]
-
-    G, node_counter, node_map = nx.Graph(), 0, {}
-    def add_node(p_phys_xyz: np.ndarray) -> int:
-        nonlocal node_counter
-        key = tuple(np.asarray(p_phys_xyz, float))
-        if key in node_map: return node_map[key]
-        vox_xyz = reference_image.TransformPhysicalPointToIndex(p_phys_xyz.tolist())
-        pos_vox_zyx = np.array(vox_xyz)[::-1]
-        pos_vox_zyx = np.clip(pos_vox_zyx, 0, np.array(speed.shape) - 1).astype(int)
-        G.add_node(node_counter, pos_phys=np.asarray(p_phys_xyz, float), pos=pos_vox_zyx)
-        node_map[key] = node_counter; node_counter += 1
-        return node_map[key]
-
-    for t_phys in targets_phys:
-        path = backtrack_gradient(
-            start_point_phys=t_phys, end_point_phys=seed_phys,
-            gradient_field=gradient, reference_image=reference_image,
-            travel_time=travel_time,
-            graph_kd_phys=graph_kd_phys  # <— NEW
-        )
-        if len(path) < 2: continue
-        ids = [add_node(p) for p in path]
-        for i in range(len(ids) - 1):
-            u, v = ids[i], ids[i + 1]
-            if u != v and not G.has_edge(u, v):
-                d = float(np.linalg.norm(G.nodes[u]['pos_phys'] - G.nodes[v]['pos_phys']))
-                G.add_edge(u, v, length_mm=d)
-    return G
 
 # =========================
 # Centerline (vtkPolyData) helpers
@@ -600,9 +476,6 @@ def export_seqseg_centerline_from_graph(
     return poly
 
 
-# =========================
-# Graph normalization helpers (DEBUG friendly)
-# =========================
 def rebind_points_from_indices(G: nx.Graph, img: sitk.Image,
                                idx_key='pos_idx_xyz', out_key='point'):
     for n, d in G.nodes(data=True):
@@ -650,107 +523,6 @@ def inside_frac_phys(G: nx.Graph, img: sitk.Image, key='point', sample=1024) -> 
             ok += 1
     return ok / max(1, len(nodes))
 
-import numpy as np
-import networkx as nx
-
-def postprocess_graph(
-    G: nx.Graph,
-    *,
-    pos_key: str = "point",          # node attr with xyz (mm)
-    edge_prob_key: str = "edge_prob",
-    keep: str = "largest",           # "largest" or "filter"
-    min_nodes: int = 5,              # used if keep="filter"
-    spur_len_mm: float = 1.0,
-    cycle_len_mm: float = 4.0,
-    join_endpoints_eps_mm: float | None = None,  # e.g. 2.0 to fuse close comps
-    in_place: bool = True
-) -> nx.Graph:
-    """
-    Simple vascular-graph cleanup.
-    Returns the processed graph (in-place by default).
-    """
-    H = G if in_place else G.copy()
-
-    # 0) basic cleanup
-    H.remove_edges_from(nx.selfloop_edges(H))
-    H.remove_nodes_from(list(nx.isolates(H)))
-
-    # 1) (optional) join close end-points across components
-    if join_endpoints_eps_mm:
-        def endpoints(nodes):
-            return [n for n in nodes if H.degree(n) == 1 and pos_key in H.nodes[n]]
-        while True:
-            comps = [set(c) for c in nx.connected_components(H)]
-            if len(comps) <= 1:
-                break
-            best = None
-            for i in range(len(comps)):
-                Ai = endpoints(comps[i])
-                for j in range(i + 1, len(comps)):
-                    Bj = endpoints(comps[j])
-                    for a in Ai:
-                        pa = np.asarray(H.nodes[a][pos_key], float)
-                        for b in Bj:
-                            pb = np.asarray(H.nodes[b][pos_key], float)
-                            d = float(np.linalg.norm(pa - pb))
-                            if d <= join_endpoints_eps_mm:
-                                if best is None or d < best[0]:
-                                    best = (d, a, b)
-            if best is None:
-                break
-            d, a, b = best
-            H.add_edge(a, b, **{edge_prob_key: 0.6, "length_mm": d})
-
-    # 2) component filtering
-    if keep == "largest" and H.number_of_nodes():
-        keep_nodes = max(nx.connected_components(H), key=len)
-        H.remove_nodes_from(set(H.nodes) - set(keep_nodes))
-    elif keep == "filter":
-        for C in list(nx.connected_components(H)):
-            if len(C) < min_nodes:
-                H.remove_nodes_from(C)
-
-    # 3) prune short spurs (iterative leaf trimming by geometric length)
-    changed = True
-    while changed:
-        changed = False
-        leaves = [n for n in H.nodes if H.degree(n) == 1 and pos_key in H.nodes[n]]
-        for u in leaves:
-            nbrs = list(H.neighbors(u))
-            if not nbrs:
-                continue
-            v = nbrs[0]
-            if pos_key not in H.nodes[v]:
-                continue
-            pu = np.asarray(H.nodes[u][pos_key], float)
-            pv = np.asarray(H.nodes[v][pos_key], float)
-            if np.linalg.norm(pu - pv) <= spur_len_mm:
-                H.remove_node(u)
-                changed = True
-
-    # 4) break tiny cycles: remove weakest-prob edge in each short cycle
-    for cyc in nx.minimum_cycle_basis(H):
-        L = 0.0
-        edges = []
-        for u, v in zip(cyc, cyc[1:] + cyc[:1]):
-            if not H.has_edge(u, v) and not H.has_edge(v, u):
-                continue
-            if pos_key in H.nodes[u] and pos_key in H.nodes[v]:
-                pu = np.asarray(H.nodes[u][pos_key], float)
-                pv = np.asarray(H.nodes[v][pos_key], float)
-                L += float(np.linalg.norm(pu - pv))
-            edges.append((u, v) if H.has_edge(u, v) else (v, u))
-        if L <= cycle_len_mm and edges:
-            e_min = min(edges, key=lambda e: H.edges[e].get(edge_prob_key, 0.5))
-            H.remove_edge(*e_min)
-
-    # 5) final sweep
-    H.remove_nodes_from(list(nx.isolates(H)))
-    return H
-
-# =========================
-# Helpers (add near imports)
-# =========================
 def largest_cc_simple(img: sitk.Image, background_value=0) -> sitk.Image:
     relabeled = sitk.RelabelComponent(
         sitk.ConnectedComponent(img != background_value),
@@ -764,10 +536,6 @@ def blank_like(ref: sitk.Image, pixel_id=sitk.sitkFloat32) -> sitk.Image:
     out.CopyInformation(ref)
     return out
 
-
-# =========================
-# Main (rewritten)
-# =========================
 def main():
     faulthandler.enable()
     t0 = time.time()
@@ -791,7 +559,6 @@ def main():
     ))
     model_tuple = (model, cfg_gnn, device, "ecc_edgeclf.pt")
 
-    # SeqSeg model folder (only used if you don't pass seg_file to tracer)
     seqseg_model_folder = os.path.join(
         cfg.NNUNET_RESULTS_DIR, f"{cfg.dataset_name}/nnUNetTrainer__nnUNetPlans__3d_fullres"
     )
@@ -825,11 +592,10 @@ def main():
         segmentation_image = sitk.ReadImage(dir_seg)
         segmentation_image.CopyInformation(image_ref)
 
-        # ➊ Per-case accumulators
-        start_prob_global: Optional[sitk.Image] = None   # global assembled probability (float)
+        start_prob_global: Optional[sitk.Image] = None
 
-        coverage_union: Optional[sitk.Image] = None      # binary union of selected (largest) additions
-        merged_centerlines = []                          # collect per-component guide polylines (optional)
+        coverage_union: Optional[sitk.Image] = None
+        merged_centerlines = []
 
         # --- ECC graph ---
         print("--- Building graph with ECC model ---")
@@ -922,19 +688,7 @@ def main():
             vessel_mask_np = (sitk.GetArrayFromImage(cropped_seg) > 0).astype(np.uint8)
 
             print(f"    comp {gi}: tracing FMM centerline with {len(targets_zyx)} targets...")
-            # Build corridor + KDTree once per component ROI
-            corridor = graph_corridor_mask_zyx(Gc, cropped_seg, start_xyz, size_xyz, radius_mm=2.0)
-            graph_pts_phys = np.array([np.asarray(Gc.nodes[n]['point'], float)
-                                       for n in Gc.nodes() if 'point' in Gc.nodes[n]])
-            graph_kd = KDTree(graph_pts_phys) if len(graph_pts_phys) else None
-
-            final_graph = trace_centerline_fmm(
-                vessel_mask_np, seed_zyx, targets_zyx, cropped_seg,
-                corridor_mask_zyx=corridor,
-                graph_kd_phys=graph_kd
-            )
-
-
+            final_graph = trace_centerline_fmm(vessel_mask_np, seed_zyx, targets_zyx, cropped_seg)
             if final_graph.number_of_nodes() == 0:
                 print(f"    comp {gi}: FMM produced empty graph; skipping.")
             else:

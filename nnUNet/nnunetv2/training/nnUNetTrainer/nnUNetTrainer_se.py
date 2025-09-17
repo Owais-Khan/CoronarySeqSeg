@@ -42,7 +42,6 @@ from torch._dynamo import OptimizedModule
 from torch.cuda import device_count
 from torch import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 
 from nnunetv2.configuration import ANISO_THRESHOLD, default_num_processes
 from nnunetv2.evaluation.evaluate_predictions import compute_metrics_on_folder
@@ -62,7 +61,7 @@ from nnunetv2.utilities.collate_outputs import collate_outputs
 from nnunetv2.utilities.crossval_split import generate_crossval_split
 from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
 from nnunetv2.utilities.file_path_utilities import check_workers_alive_and_busy
-from nnunetv2.new_architectures.unet_se import PlainConvUNet_se
+from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
 from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot, determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
@@ -1382,21 +1381,3 @@ class nnUNetTrainer(object):
             self.on_epoch_end()
 
         self.on_train_end()
-
-
-import json
-if __name__ == "__main__":
-    base_dir = 'C:/Users/priya/PycharmProjects/nnunet-setup'
-    dataset_id = 'Dataset008_HepaticVessel'
-    plan_path = 'C:/Users/priya/PycharmProjects/nnunet-setup/nnUNet_preprocessed/Dataset008_HepaticVessel/nnUNetPlans.json'
-    json_path = 'C:/Users/priya/PycharmProjects/nnunet-setup/nnUNet_preprocessed/Dataset008_HepaticVessel/dataset.json'
-
-    with open(plan_path, 'r') as f:
-        plans = json.load(f)
-    with open(json_path, 'r') as f:
-        dataset_json = json.load(f)
-
-    configuration = '3d_fullres'
-    fold = 5
-
-    nnUNetTrainer(plans=plans,configuration=configuration,fold=fold,dataset_json=dataset_json).run_training()

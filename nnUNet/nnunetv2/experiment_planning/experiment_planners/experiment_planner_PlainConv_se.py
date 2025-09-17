@@ -5,8 +5,7 @@ from typing import List, Union, Tuple
 import numpy as np
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, save_json, isfile, maybe_mkdir_p
-from nnUNet.nnunetv2.new_architectures.unet_se import PlainConvUNet_se
-from nnUNet.nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
+from nnunetv2.new_architectures.unet_se import PlainConvUNet_se
 
 from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_instancenorm
 

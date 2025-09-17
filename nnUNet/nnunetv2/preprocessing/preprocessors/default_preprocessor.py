@@ -340,11 +340,11 @@ def example_test_case_preprocessing():
 
 if __name__ == '__main__':
     # example_test_case_preprocessing()
-    # pp = DefaultPreprocessor()
-    # pp.run(2, '2d', 'nnUNetPlans', 8)
+    p = DefaultPreprocessor()
+    p.run(8, '3d_fullres', 'nnUNetPlans', 1)
 
     ###########################################################################################################
     # how to process a test cases? This is an example:
     # example_test_case_preprocessing()
-    seg = SimpleITK.GetArrayFromImage(SimpleITK.ReadImage('/home/isensee/temp/H-mito-val-v2.nii.gz'))[None]
-    DefaultPreprocessor._sample_foreground_locations(seg, np.arange(1, np.max(seg) + 1))
+    #seg = SimpleITK.GetArrayFromImage(SimpleITK.ReadImage('/home/isensee/temp/H-mito-val-v2.nii.gz'))[None]
+    #DefaultPreprocessor._sample_foreground_locations(seg, np.arange(1, np.max(seg) + 1))

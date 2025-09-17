@@ -39,7 +39,3 @@ if nnUNet_results is None:
     print("nnUNet_results is not defined and nnU-Net cannot be used for training or "
           "inference. If this is not intended behavior, please read documentation/setting_up_paths.md for information "
           "on how to set this up.")
-if gnn_folder is None:
-    print("gnn model folder is not set, This is required to save gnn model graphs, checkpoints and inference data if requested")
-if seqseg_results is None:
-    print("seqseg results directory is not set")

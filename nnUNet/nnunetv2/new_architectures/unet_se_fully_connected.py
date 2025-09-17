@@ -122,9 +122,7 @@ class SEBlock3D(nn.Module):
         )
 
     def forward(self, x, g=None):
-        # Optional cross‐attn or gating on x+g here…
         b, c, d, h, w = x.shape
-        # Channel attention
         chn = self.pool(x).view(b, c)
         chn = self.channel_exc(chn).view(b, c, 1, 1, 1)
         x_ch = x * chn
@@ -135,8 +133,6 @@ class SEBlock3D(nn.Module):
         return x_ch * spa_mask
 
 
-
-# --- End of SEBlock3D Module ---
 
 class StackedConvBlocks(nn.Module):
     def __init__(self,
@@ -209,26 +205,28 @@ class StackedConvBlocks(nn.Module):
 
 
 class PlainConvEncoder_sefc(nn.Module):
-    def __init__(self,
-                 input_channels: int,
-                 n_stages: int,
-                 features_per_stage: Union[int, List[int], Tuple[int, ...]],
-                 conv_op: Type[_ConvNd],
-                 kernel_sizes: Union[int, List[int], Tuple[int, ...]],
-                 strides: Union[int, List[int], Tuple[int, ...]],
-                 n_conv_per_stage: Union[int, List[int], Tuple[int, ...]],
-                 conv_bias: bool = False,
-                 norm_op: Union[None, Type[nn.Module]] = None,
-                 norm_op_kwargs: dict = None,
-                 dropout_op: Union[None, Type[_DropoutNd]] = None,
-                 dropout_op_kwargs: dict = None,
-                 nonlin: Union[None, Type[torch.nn.Module]] = None,
-                 nonlin_kwargs: dict = None,
-                 return_skips: bool = True,
-                 nonlin_first: bool = False,
-                 pool: str = 'conv',
-                 se_reduction_ratio: int = 16
-                 ):
+    def __init__(
+            self,
+            input_channels: int,
+            n_stages: int,
+            features_per_stage: Union[int, List[int], Tuple[int, ...]],
+            conv_op: Type[_ConvNd],
+            kernel_sizes: Union[int, List[int], Tuple[int, ...]],
+            strides: Union[int, List[int], Tuple[int, ...]],
+            n_conv_per_stage: Union[int, List[int], Tuple[int, ...]],
+            conv_bias: bool = False,
+            norm_op: Union[None, Type[nn.Module]] = None,
+            norm_op_kwargs: dict = None,
+            dropout_op: Union[None, Type[_DropoutNd]] = None,
+            dropout_op_kwargs: dict = None,
+            nonlin: Union[None, Type[torch.nn.Module]] = None,
+            nonlin_kwargs: dict = None,
+            return_skips: bool = True,
+            nonlin_first: bool = False,
+            pool: str = 'conv',
+            se_reduction_ratio: int = 16
+    ):
+
         super().__init__()
         self.conv_op = conv_op
         self.norm_op = norm_op
@@ -239,6 +237,7 @@ class PlainConvEncoder_sefc(nn.Module):
         self.nonlin_kwargs = nonlin_kwargs
         self.conv_bias = conv_bias
         self.nonlin_first = nonlin_first
+        self.strides = strides
 
         if isinstance(kernel_sizes, int):
             self.kernel_sizes_per_stage = [kernel_sizes] * n_stages
@@ -564,3 +563,88 @@ class PlainConvUNet_sefc(nn.Module):
             nn.init.kaiming_normal_(module.weight, a=0, mode='fan_in', nonlinearity='leaky_relu')
             if module.bias is not None:
                 nn.init.constant_(module.bias, 0)
+
+def extract_args(json_path, plan_path):
+    with open(plan_path) as f:
+        plans = json.load(f)
+    config_key = '3d_fullres'
+    if config_key not in plans['configurations']:
+        available_configs = list(plans['configurations'].keys())
+        if not available_configs: raise ValueError("No configurations found in plans file.")
+        config_key = available_configs[0]
+        print(f"Warning: '3d_fullres' configuration not found. Using first available: '{config_key}'")
+
+    if 'architecture' not in plans['configurations'][config_key] or \
+            'arch_kwargs' not in plans['configurations'][config_key]['architecture']:
+        raise KeyError(f"Plans JSON ('{config_key}') missing 'architecture' or 'arch_kwargs'.")
+    arch = plans['configurations'][config_key]['architecture']['arch_kwargs']
+
+    with open(json_path) as f:
+        ds = json.load(f)
+
+    se_params = plans['configurations'][config_key].get('se_gate_kwargs', {"se_reduction_ratio": 16})
+    required_arch_keys = ['n_stages', 'features_per_stage', 'n_conv_per_stage',
+                          'n_conv_per_stage_decoder', 'kernel_sizes', 'strides']
+    for key in required_arch_keys:
+        if key not in arch: raise KeyError(f"Key '{key}' missing from 'arch_kwargs' in plans ('{config_key}').")
+
+    example_stride = arch['strides'][0]
+    dim = len(example_stride) if isinstance(example_stride, (list, tuple)) else 1 if isinstance(example_stride,
+                                                                                                int) else 3  # Default to 3d
+
+    conv_op_resolved = nn.Conv3d if dim == 3 else (nn.Conv2d if dim == 2 else nn.Conv1d)
+    norm_op_resolved = nn.InstanceNorm3d if dim == 3 else (nn.InstanceNorm2d if dim == 2 else nn.InstanceNorm1d)
+
+    return dict(
+        n_stages=arch['n_stages'],
+        features_per_stage=arch['features_per_stage'],
+        n_conv_per_stage=arch['n_conv_per_stage'],
+        n_conv_per_stage_decoder=arch['n_conv_per_stage_decoder'],
+        input_channels=len(ds.get('channel_names', {'0': 'default'})),
+        num_classes=len(ds.get('labels', {'0': 'bg', '1': 'fg'})),
+        kernel_sizes=arch['kernel_sizes'],
+        strides=arch['strides'],
+        deep_supervision=True,
+        conv_op=conv_op_resolved,
+        conv_bias=arch.get('conv_bias', True),
+        norm_op=norm_op_resolved,
+        norm_op_kwargs=arch.get('norm_op_kwargs', {"eps": 1e-05, "affine": True}),
+        dropout_op=None,
+        dropout_op_kwargs=None,
+        nonlin=torch.nn.LeakyReLU,
+        nonlin_kwargs=arch.get('nonlin_kwargs', {"inplace": True}),
+        nonlin_first=arch.get('nonlin_first', False),
+        **se_params
+    )
+from torch.amp.autocast_mode import autocast
+def test_run(model, input_shape=(1, 1, 32, 32, 32), device="cuda"):
+    model = model.to(device)
+    model.eval()
+    x = torch.randn(input_shape).to(device)
+    if device == "cuda": torch.cuda.reset_peak_memory_stats(device=device); torch.cuda.synchronize()
+    mem_before = torch.cuda.memory_allocated(device=device) if device == "cuda" else 0
+    with torch.no_grad():
+        with autocast(device_type=device, enabled=(device == "cuda")): output = model(x)
+    if device == "cuda": torch.cuda.synchronize()
+    mem_after = torch.cuda.memory_allocated(device=device) if device == "cuda" else 0
+    peak_mem = torch.cuda.max_memory_allocated(device=device) if device == "cuda" else 0
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    output_shape_str = str(output[-1].shape if isinstance(output, list) else output.shape)
+    print(f"Output Shape: {output_shape_str}, Params: {total_params:,}")
+    if device == "cuda": print(
+        f"Mem Before: {mem_before / 1e6:.1f}MB, After: {mem_after / 1e6:.1f}MB, Peak: {peak_mem / 1e6:.1f}MB")
+if __name__ == "__main__":
+
+
+    base_dir = 'C:/Users/priya/PycharmProjects/nnunet-setup';
+    dataset_id = 'Dataset008_HepaticVessel'
+    print(f"Base dir: {base_dir}, Dataset ID: {dataset_id}")
+    json_path_main = os.path.join(base_dir, 'nnUNet_preprocessed', dataset_id, 'dataset.json')
+    plan_path_main = os.path.join(base_dir, 'nnUNet_preprocessed', dataset_id, 'nnUNetPlans.json')
+
+    current_device = "cuda" if torch.cuda.is_available() else "cpu"
+    args_for_model_main = extract_args(json_path_main, plan_path_main)
+    model_main = PlainConvUNet_sefc(**args_for_model_main).to(device=current_device)
+    dummy_input_channels_main = args_for_model_main['input_channels']
+    dim_for_shape = convert_conv_op_to_dim(args_for_model_main['conv_op'])
+    test_run(model=model_main,input_shape=(1, 1, 28,128,128),device=current_device)

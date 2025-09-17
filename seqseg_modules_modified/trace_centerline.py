@@ -1,23 +1,4 @@
-# ---------------------------------------------------------------------
-# Graph-guided SeqSeg tracer (free explore; unified candidates; verbose)
-#   • Candidates per step = CL neighbors + KNN VOL nodes + IMG ray peaks
-#   • Image evidence uses a fixed saturating squash (no per-step norm)
-#   • Frontier bonus for coverage hunger
-#   • ε-greedy Top-K selection + momentum extension
-#   • Probabilities:
-#       – Centerline (CL): constant probability for all CL edges/nodes
-#       – Volumetric (VOL): use existing edge_prob on Gvol edges as-is
-#       – Image (IMG): unchanged (ray tube integrals)
-#   • Auto-reseed when:
-#       – zero-coverage streak is hit
-#       – fused best score stays below threshold for a streak
-#       – no candidates are found at a step
-#   • Early stop only when:
-#       – coverage goal is met
-#       – max steps per branch are reached
-#   • Lean code: caches KD-trees, minimizes SITK⇄NumPy conversions
-#   • VERBOSE logging of key decisions: ROI, candidates, pick, momentum, coverage
-# ---------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -29,14 +10,13 @@ import SimpleITK as sitk
 import networkx as nx
 from scipy.spatial import cKDTree as KDTree
 
-# --- SeqSeg modules (I/O + nnU-Net + assembly) ---
 from SeqSeg.seqseg.modules.sitk_functions import (
     import_image, extract_volume, copy_settings, remove_other_vessels, check_seg_border
 )
 from SeqSeg.seqseg.modules.nnunet import initialize_predictor
 from SeqSeg.seqseg.modules.assembly import Segmentation
 
-from seqseg_built_from_scratch.assembly import VesselTree
+from seqseg_modules_modified.assembly import VesselTree
 
 
 # ----------------- small helpers -----------------
@@ -62,18 +42,18 @@ def _sigmoid(z: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-z))
 
 def _squash01_exp(x: np.ndarray, k: float) -> np.ndarray:
-    """Absolute, fixed saturating map to [0,1] (no per-step normalization)."""
     x = np.asarray(x, float)
     x = np.maximum(x, 0.0)
     return 1.0 - np.exp(-k * x)
 
 def _normalize_node_attrs_to_phys(G: nx.Graph) -> None:
-    """Ensure 'point' (mm) and 'radius' exist if alternatives are present."""
     for _, d in G.nodes(data=True):
         if ('point' not in d) or (d['point'] is None):
             p = d.get('pos_phys', d.get('pos_mm', None))
             if p is not None:
                 d['point'] = _to_np(p)
+        if ('radius' not in d) or (d['radius'] is None):
+            r = d.get('radius_mm', d.get('MaximumInscribedSphereRadius', None))
         if ('radius' not in d) or (d['radius'] is None):
             r = d.get('radius_mm', d.get('MaximumInscribedSphereRadius', None))
             if r is not None:
@@ -113,8 +93,6 @@ def _mk_step_dict(old_point, old_radius, new_point, new_radius, tangent, angle_c
     return d
 
 
-# -------- phys/idx transforms ----------
-
 def _phys_to_idx(img: sitk.Image, p_phys: np.ndarray) -> np.ndarray:
     ci = np.array(img.TransformPhysicalPointToContinuousIndex(_phys_tuple(p_phys)), float)
     sz = np.array(img.GetSize(), float)
@@ -127,7 +105,6 @@ def _snap_phys_inside(image: sitk.Image, p_xyz: np.ndarray) -> np.ndarray:
     return np.array(image.TransformContinuousIndexToPhysicalPoint(tuple(ci.tolist())))
 
 
-# -------- image scoring (SeqSeg-like) ----------
 
 def _line_integral_prob(prob_img: sitk.Image,
                         start_phys: np.ndarray,
@@ -170,7 +147,6 @@ def _ray_profile(prob_img: sitk.Image,
                  ray_len_mm: float,
                  step_mm: float,
                  tube_sigma_mm: float) -> Tuple[np.ndarray, np.ndarray]:
-    """Return distances (mm) and per-step tube integrals along a ray."""
     steps = max(1, int(np.ceil(ray_len_mm / max(step_mm, 1e-6))))
     t = np.arange(1, steps + 1, dtype=float) * step_mm
     vals = []
@@ -196,8 +172,6 @@ def _nms1d(y: np.ndarray, radius: int = 2, min_prom: float = 0.0, max_k: int = 3
     return idx
 
 
-# -------- ROI helper ----------
-
 def map_to_image_diraware(center_phys, box_radius_mm: float, volume_size_ratio: float, *, image: sitk.Image,
                           min_res: int = 8, require_odd: bool = True) -> Tuple[list[int], list[int], bool]:
     if image is None:
@@ -221,7 +195,6 @@ def map_to_image_diraware(center_phys, box_radius_mm: float, volume_size_ratio: 
     return start_clamped.tolist(), size_vox.tolist(), border
 
 
-# ----------------- probabilities & coverage -----------------
 
 def ensure_node_probability_from_edges(
     G: nx.Graph,
@@ -229,7 +202,6 @@ def ensure_node_probability_from_edges(
     edge_prob_key: str = "edge_prob",
     default: float = 0.5
 ) -> None:
-    """Derive a node probability as the mean of incident 'edge_prob' values; used as fallback."""
     for n in G.nodes():
         neigh = list(G.neighbors(n))
         if not neigh:
@@ -242,7 +214,6 @@ def ensure_node_probability_from_edges(
         G.nodes[n][node_prob_key] = float(np.mean(vals)) if vals else float(default)
 
 def set_centerline_constant_probability(Gcl: nx.Graph, const: float = 1.0) -> None:
-    """Assign a constant probability to all CL nodes and edges (stored as 'node_prob' and 'cl_prob')."""
     const = float(const)
     for n in Gcl.nodes():
         Gcl.nodes[n]['node_prob'] = const
@@ -281,6 +252,7 @@ def vt_init_coverage(vt: VesselTree, G_for_cov: nx.Graph):
     deg = dict(G_for_cov.degree())
     mdeg = float(max(1, max(deg.values()) if len(deg) else 1))
     vt._centrality = {n: (deg.get(n, 0) / mdeg) for n in G_for_cov.nodes()}
+
 def vt_mark_covered_by_segment(vt: VesselTree, G_for_cov: nx.Graph, p0: np.ndarray, p1: np.ndarray,
                                *, step_mm: float = 1.2, radius_scale: float = 1.5) -> int:
     if vt._cov_kdt is None or len(vt._cov_pts) == 0:
@@ -297,7 +269,6 @@ def vt_mark_covered_by_segment(vt: VesselTree, G_for_cov: nx.Graph, p0: np.ndarr
 
     n = max(1, int(np.ceil(L / max(step_mm, 1e-6))))
     newly = set()
-    # radius per sample uses nearest node’s radius (cheap and works well)
     for t in np.linspace(0.0, 1.0, n+1):
         s = p0 + t * seg
         d, j = vt._cov_kdt.query(s, k=1)
@@ -370,8 +341,6 @@ def _pick_reseed_node(vt: VesselTree, Gcov: nx.Graph, current_point: np.ndarray,
     return None
 
 
-# ----------------- candidate generation (unified pools) -----------------
-
 def _gather_candidates_unified(
     vt: VesselTree,
     Gcent: nx.Graph,
@@ -393,28 +362,20 @@ def _gather_candidates_unified(
     ray_len_mm: float = 20.0,
     ray_step_mm: float = 0.2,
     tube_sigma_mm: float = 0.3,
-    # gentle priors
-    prior_CL: float = 1.0,
-    prior_VOL: float = 0.85,
-    prior_IMG: float = 0.70,
     # misc
     min_radius: float = 0.0,
     add_radius: float = 0.0,
     dedup_eps_mm: float = 0.2,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
-    """
-    Return (points, radii, angles, features_dict) where features include:
-      source_prior, near_score, eprob, img_raw, frontier, cl_prob, step_penalty, src
-    """
     old_vec = _unit(curr - prev)
     spacing_xyz = None if prob_img is None else np.array(prob_img.GetSpacing(), float)
 
     pts, rads, angs = [], [], []
-    source_prior, near_scores, eprobs, img_raw = [], [], [], []
+    near_scores, eprobs, img_raw = [], [], []
     frontier, clprob, step_penalty, src_ids = [], [], [], []  # 0=CL, 1=VOL, 2=IMG
 
-    def _append_candidate(p: np.ndarray, r_guess: float, src_prior: float, cl_prob_val: float = 0.0,
-                          img_hint: Optional[float] = None, src_id: Optional[int] = None):
+    def _append_candidate(p: np.ndarray, r_guess: float, *, cl_prob_val: float = 0.0,
+                          img_hint: Optional[float] = None, src_id: int):
         # dedup
         if pts and np.min(np.linalg.norm(np.vstack(pts) - p, axis=1)) < float(dedup_eps_mm):
             return
@@ -452,15 +413,9 @@ def _gather_candidates_unified(
         step_pen = max(0.0, step_len / max(s_pref, 1e-6) - 1.0)
         # append
         pts.append(p); rads.append(r_eff + add_radius); angs.append(ang)
-        source_prior.append(src_prior); near_scores.append(near_val); eprobs.append(eprob)
+        near_scores.append(near_val); eprobs.append(eprob)
         img_raw.append(img_val); frontier.append(f); clprob.append(float(cl_prob_val)); step_penalty.append(step_pen)
-        if src_id is None:
-            if abs(src_prior - prior_CL) < 1e-6: sid = 0
-            elif abs(src_prior - prior_VOL) < 1e-6: sid = 1
-            else: sid = 2
-        else:
-            sid = int(src_id)
-        src_ids.append(sid)
+        src_ids.append(int(src_id))
 
     # --- Centerline neighbors (constant CL prob) ---
     nC = _nearest_node(kdt_c, ids_c, curr)
@@ -471,7 +426,7 @@ def _gather_candidates_unified(
             p_c = _to_np(Gcent.nodes[nb]['point'])
             r_c = float(Gcent.nodes[nb].get('radius', old_radius))
             cprob = float(Gcent.edges[nC, nb].get('cl_prob', 1.0)) if Gcent.has_edge(nC, nb) else 1.0
-            _append_candidate(p_c, r_c, prior_CL, cl_prob_val=cprob, src_id=0)
+            _append_candidate(p_c, r_c, cl_prob_val=cprob, src_id=0)
 
     # --- Volumetric KNN around current point ---
     if kdt_v is not None and ids_v:
@@ -485,7 +440,7 @@ def _gather_candidates_unified(
                 if np.linalg.norm(p_v - curr) > VOL_RADIUS_MM:
                     continue
                 r_v = float(Gvol.nodes[vn].get('radius', old_radius))
-                _append_candidate(p_v, r_v, prior_VOL, cl_prob_val=0.0, src_id=1)
+                _append_candidate(p_v, r_v, cl_prob_val=0.0, src_id=1)
         except Exception:
             pass
 
@@ -518,7 +473,7 @@ def _gather_candidates_unified(
                         r_guess = old_radius
                 else:
                     r_guess = old_radius
-                _append_candidate(p_img, r_guess, prior_IMG, cl_prob_val=0.0, img_hint=float(prof[idx]), src_id=2)
+                _append_candidate(p_img, r_guess, cl_prob_val=0.0, img_hint=float(prof[idx]), src_id=2)
                 added += 1
                 if added >= K_IMG: break
             if added >= K_IMG: break
@@ -530,7 +485,6 @@ def _gather_candidates_unified(
     R = np.asarray(rads, float)
     A = np.asarray(angs, float)
     feats = {
-        'src_prior': np.asarray(source_prior, float),
         'near': np.asarray(near_scores, float),
         'eprob': np.asarray(eprobs, float),
         'img_raw': np.asarray(img_raw, float),
@@ -593,11 +547,6 @@ def trace_centerline(
     SCORE_PASS_THR   = float(cfg.get('SCORE_PASS_THR', 0.35))
     BAD_STREAK_MAX   = int(cfg.get('BAD_STREAK_MAX', 2))
 
-    MOMENTUM_ENABLE   = bool(cfg.get('MOMENTUM_ENABLE', True))
-    MOMENTUM_MIN_COS  = float(cfg.get('MOMENTUM_MIN_COS', 0.90))
-    MOMENTUM_MAX_MULT = float(cfg.get('MOMENTUM_MAX_MULT', 2.3))
-    MOMENTUM_CONF_K   = float(cfg.get('MOMENTUM_CONF_K', 5.0))  # confidence steepness
-
     # Image squash
     IMG_SQUASH_K      = float(cfg.get('IMG_SQUASH_K', 0.01))
 
@@ -618,7 +567,6 @@ def trace_centerline(
     RESEED_COOLDOWN_STEPS = int(cfg.get('RESEED_COOLDOWN_STEPS', 0))
 
     # Unified score weights
-    W_SRC_PRIOR   = float(cfg.get('W_SRC_PRIOR',   0.10))
     W_NEAR_GRAPH  = float(cfg.get('W_NEAR_GRAPH',  0.9))
     W_EPROB       = float(cfg.get('W_EPROB',       0))
     W_IMG         = float(cfg.get('W_IMG',         0))
@@ -789,8 +737,8 @@ def trace_centerline(
                 prob_prediction = copy_settings(prob_prediction, cropped_vol)
                 vlog(2, f"[NN] forward {time.time()-t0:.3f}s | crop_size={list(map(int, prob_prediction.GetSize()))}")
             else:
-                pred_img = cropped_vol
-                prob_prediction = cropped_vol
+                # predictor-off path removed
+                raise RuntimeError("Predictor unavailable for probability inference.")
             # keep island near center
             seed_vox = (np.rint(np.array(size_clamped) / 2).astype(int)).tolist()
             pred_img = remove_other_vessels(pred_img, seed_vox)
@@ -832,20 +780,19 @@ def trace_centerline(
         eprob = np.clip(F['eprob'], 0, 1)
         frontier = np.clip(F['frontier'], 0, 1)
         clprob = np.clip(F['cl_prob'], 0, 1)
-        src_prior = np.clip(F['src_prior'], 0, 1)
         ang_pen = np.asarray(A, float) / 180.0
         step_pen = np.asarray(F['step_pen'], float)
         src = np.asarray(F.get('src', np.zeros(len(P), int)), int)
 
-        fused = (W_SRC_PRIOR*src_prior + W_NEAR_GRAPH*near + W_EPROB*eprob +
+        fused = (W_NEAR_GRAPH*near + W_EPROB*eprob +
                  W_IMG*img + W_FRONTIER*frontier + W_CLPROB*clprob -
                  W_ANG_PEN*ang_pen - W_STEP_PEN*step_pen)
 
         order = np.argsort(-fused)
         P, R, A, fused = P[order], R[order], A[order], fused[order]
-        near, eprob, frontier, clprob, src_prior, ang_pen, step_pen, img, src = (
+        near, eprob, frontier, clprob, ang_pen, step_pen, img, src = (
             near[order], eprob[order], frontier[order], clprob[order],
-            src_prior[order], ang_pen[order], step_pen[order], img[order], src[order]
+            ang_pen[order], step_pen[order], img[order], src[order]
         )
 
         # Verbose candidate summary
@@ -890,7 +837,6 @@ def trace_centerline(
                 f" eps_explore={explore_flag} pt={np.round(P[pick],2)} r={R[pick]:.2f} ang={A[pick]:.1f}"
             )
             comp = {
-                'src_prior': (W_SRC_PRIOR, src_prior[pick]),
                 'near': (W_NEAR_GRAPH, near[pick]),
                 'eprob': (W_EPROB, eprob[pick]),
                 'img': (W_IMG, img[pick]),
@@ -909,8 +855,8 @@ def trace_centerline(
             vlog(1, "[STALL] degenerate step_vec → try next candidate")
             if len(P) > 1:
                 P, R, A, fused = P[1:], R[1:], A[1:], fused[1:]
-                near, eprob, frontier, clprob, src_prior, ang_pen, step_pen, img, src = (
-                    near[1:], eprob[1:], frontier[1:], clprob[1:], src_prior[1:], ang_pen[1:], step_pen[1:], img[1:], src[1:]
+                near, eprob, frontier, clprob, ang_pen, step_pen, img, src = (
+                    near[1:], eprob[1:], frontier[1:], clprob[1:], ang_pen[1:], step_pen[1:], img[1:], src[1:]
                 )
                 continue
             else:
@@ -919,20 +865,9 @@ def trace_centerline(
                 continue
 
         tangent = _unit(step_vec)
-        # Momentum extension when aligned & confident
-        if MOMENTUM_ENABLE:
-            prev_tan = _unit(step.get('tangent', np.array([1.0,0.0,0.0])))
-            cosang = float(np.clip(np.dot(prev_tan, tangent), -1.0, 1.0))
-            if cosang >= MOMENTUM_MIN_COS:
-                conf = float(_sigmoid(MOMENTUM_CONF_K * (float(fused[pick]) - SCORE_PASS_THR)))
-                mul = min(MOMENTUM_MAX_MULT, 1.0 + 1.2 * conf)
-                cand = _to_np(curr_pt) + mul * (nxt_p - _to_np(curr_pt))
-                nxt_p = _snap_phys_inside(geom_img, cand)
-                tangent = _unit(nxt_p - curr_pt)
-                vlog(2, f"[MOMENTUM] cos={cosang:.3f} conf={conf:.2f} mul={mul:.2f}")
 
         vt.steps.append(_mk_step_dict(curr_pt, curr_rad, nxt_p, nxt_r, tangent, angle_change=float(A[pick])))
-        newly = vt_mark_covered_by_segment(vt, Gcov, curr_pt, nxt_p, step_mm=1, radius_scale=12)
+        newly = vt_mark_covered_by_segment(vt, Gcov, curr_pt, nxt_p, step_mm=3, radius_scale=2)
         cov = vt_coverage_ratio(vt, total_nodes_for_cov)
         vlog(1, f"[COVER] +{newly} → {len(vt.node_traversed)}/{total_nodes_for_cov} ({100*cov:.1f}%) targets_left={len(_targets_remaining(vt))}")
 
@@ -968,10 +903,10 @@ def trace_centerline(
 
     vlog(1, f"[SUMMARY] zero_cov_max_streak={zero_cov_streak_max} reseeds_from_zero_cov={reseed_count_zero_cov}")
 
-    return ([],                # list_centerlines (unused)
-            [],                # list_surfaces (unused)
-            [],                # list_points (unused)
-            [],                # list_inside_pts (unused)
-            assembly_segs,     # Segmentation object (global assembly)
-            vt,                # VesselTree with steps/history/coverage
+    return ([],
+            [],
+            [],
+            [],
+            assembly_segs,
+            vt,
             i)
