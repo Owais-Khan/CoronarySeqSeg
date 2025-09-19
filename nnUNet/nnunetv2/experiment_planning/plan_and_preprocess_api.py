@@ -24,6 +24,9 @@ def select_experiment_planner(model:str):
     elif model=='base_nnunet':
         print(f'planning for {model}')
         from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
+    elif model=='unet_ConvLSTM':
+        print(f'planning for {model}')
+        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_ConvLSTM import ExperimentPlanner
     else:
         from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
         print('Model not recognized falliing back to default nnunet')

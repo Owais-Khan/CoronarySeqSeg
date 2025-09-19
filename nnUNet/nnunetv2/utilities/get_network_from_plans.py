@@ -5,6 +5,7 @@ from typing import Union
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.new_architectures.unet_se import PlainConvUNet_se
 from nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
+from nnunetv2.new_architectures.unet_ConvLSTM import PlainConvUNet_ConvLSTM
 from batchgenerators.utilities.file_and_folder_operations import join
 
 
@@ -13,8 +14,10 @@ def import_new_architecture(model: str):
         network = PlainConvUNet_se
     elif model == 'unet_se_fully_connected':
         network = PlainConvUNet_sefc
+    elif model == 'unet_ConvLSTM':
+        network = PlainConvUNet_ConvLSTM
     else:
-        print('architecture unknown falling back to nnunet')
+        print('[Err] Architecture unknown falling back to nnunet')
         network = None
     return network
 
@@ -62,7 +65,7 @@ if __name__ == "__main__":
     import torch
 
     model = get_network_from_plans(
-        arch_class_name="nnunetv2.new_architectures.unet_se.PlainConvUNet_se",
+        arch_class_name="nnunetv2.new_architectures.unet_ConvLSTM.PlainConvUNet_ConvLSTM",
         arch_kwargs={
             "n_stages": 7,
             "features_per_stage": [
