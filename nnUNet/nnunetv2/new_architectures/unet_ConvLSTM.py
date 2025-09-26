@@ -288,7 +288,7 @@ class PlainConvEncoder_ConvLSTM(nn.Module):
         return output
 
 
-# ✨ NEW: Lightweight ConvLSTM Module
+
 class LightConvLSTMSkip(nn.Module):
     def __init__(self, in_ch, r=4, kernel_size=3):
         super().__init__()
@@ -585,21 +585,3 @@ def test_run(model, model_name, input_shape=(1, 1, 32, 128, 128), device="cuda")
         traceback.print_exc()
 
 
-if __name__ == "__main__":
-    # Create dummy files for standalone execution if they don't exist
-    base_dir = r'C:\Users\priya\PycharmProjects\nnunet-setup'
-    dataset_id = 'Dataset008_HepaticVessel'
-    os.makedirs(os.path.join(base_dir, 'nnUNet_preprocessed', dataset_id), exist_ok=True)
-    dataset_json_path = os.path.join(base_dir, 'nnUNet_preprocessed', dataset_id, 'dataset.json')
-    plans_json_path = os.path.join(base_dir, 'nnUNet_preprocessed', dataset_id, 'nnUNetPlans.json')
-
-    current_device = "cuda" if torch.cuda.is_available() else "cpu"
-    args_for_model_main = extract_args(dataset_json_path, plans_json_path)
-
-    # Use an input shape that might cause mismatch issues to test the fix
-    input_shape_3d = (1, 1, 28, 128, 128)
-
-    model_main = PlainConvUNet_ConvLSTM(**args_for_model_main)
-    test_run(model=model_main, model_name="U-Net with ConvLSTM Decoder and Corrected ConvTranspose3d",
-             input_shape=input_shape_3d,
-             device=current_device)

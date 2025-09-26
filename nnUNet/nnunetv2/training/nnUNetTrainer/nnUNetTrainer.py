@@ -53,7 +53,7 @@ from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_p
 from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
 from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
 from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
+from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss,DC_and_CE_loss_wClDice,DC_and_BCE_loss_wClDice
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
@@ -66,6 +66,78 @@ from nnunetv2.utilities.helpers import empty_cache, dummy_context
 from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot, determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 
+from functools import partial
+import torch
+import torch.nn.functional as F
+from monai.losses import SoftclDiceLoss
+def _cldice_combo(pred, target, *, base_loss, cldice, weight, ignore_label=None):
+    base = base_loss(pred, target)
+
+    p0 = pred[0] if isinstance(pred, (list, tuple)) else pred  # (B,C,...)
+    C  = p0.shape[1]
+    probs = torch.sigmoid(p0) if C == 1 else torch.softmax(p0, dim=1)
+
+    # one-hot targets (vectorized)
+    if target.ndim == probs.ndim:
+        t = target.float()
+    else:
+        if C == 1:
+            t = (target == 1).float().unsqueeze(1)
+        else:
+            oh = F.one_hot(target.clamp_min(0).long(), num_classes=C)  # (B,*,C)
+            t = oh.permute(0, -1, *range(1, oh.ndim - 1)).float()
+
+    # ignore label (index-style) → build valid mask once
+    if (ignore_label is not None and ignore_label >= 0 and not target.dtype.is_floating_point):
+        valid = (target != ignore_label).unsqueeze(1)  # (B,1,...)
+        probs, t = probs * valid, t * valid
+
+    # drop background only if truly multi-class
+    if C > 1:
+        probs = probs[:, 1:]
+        t = t[:, 1:]
+
+    # guards (catch config mismatches early)
+    assert probs.shape[1] > 0, f"clDice got zero channels: {tuple(probs.shape)}"
+    assert probs.shape[1] == t.shape[1], f"pred/target channel mismatch: {probs.shape} vs {t.shape}"
+
+    return base + weight * cldice(probs, t)
+
+def _build_loss(self):
+    # --- base nnU-Net loss (no clDice inside) ---
+    if self.label_manager.has_regions:
+        loss = DC_and_BCE_loss(
+            bce_kwargs={},
+            soft_dice_kwargs={'batch_dice': self.configuration_manager.batch_dice,
+                              'do_bg': True, 'smooth': 1e-5, 'ddp': self.is_ddp},
+            weight_ce=1, weight_dice=1,
+            use_ignore_label=self.label_manager.ignore_label is not None,
+            dice_class=MemoryEfficientSoftDiceLoss
+        )
+    else:
+        loss = DC_and_CE_loss(
+            soft_dice_kwargs={'batch_dice': self.configuration_manager.batch_dice,
+                              'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp},
+            ce_kwargs={},
+            weight_ce=1, weight_dice=1,
+            ignore_label=self.label_manager.ignore_label,
+            dice_class=MemoryEfficientSoftDiceLoss
+        )
+
+    if self._do_i_compile():
+        loss.dc = torch.compile(loss.dc)
+
+    # Deep supervision as usual
+    if self.enable_deep_supervision:
+        ds_scales = self._get_deep_supervision_scales()
+        weights = np.array([1 / (2 ** i) for i in range(len(ds_scales))])
+        weights[-1] = 1e-6 if (self.is_ddp and not self._do_i_compile()) else 0
+        loss = DeepSupervisionWrapper(loss, (weights / weights.sum()))
+
+    # --- add MONAI clDice once on highest-res head ---
+    cldice = SoftclDiceLoss(iter_=3, smooth=1.0)
+    ignore_label = getattr(self.label_manager, "ignore_label", None)
+    return partial(_cldice_combo, base_loss=loss, cldice=cldice, weight=0.3, ignore_label=ignore_label)
 
 class nnUNetTrainer(object):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -332,7 +404,8 @@ class nnUNetTrainer(object):
             arch_init_kwargs_req_import,
             num_input_channels,
             num_output_channels,
-            allow_init=True)
+            allow_init=True,
+            deep_supervision=enable_deep_supervision)
 
     def _get_deep_supervision_scales(self):
         if self.enable_deep_supervision:
@@ -389,15 +462,26 @@ class nnUNetTrainer(object):
 
     def _build_loss(self):
         if self.label_manager.has_regions:
-            loss = DC_and_BCE_loss({},
-                                   {'batch_dice': self.configuration_manager.batch_dice,
-                                    'do_bg': True, 'smooth': 1e-5, 'ddp': self.is_ddp},
-                                   use_ignore_label=self.label_manager.ignore_label is not None,
-                                   dice_class=MemoryEfficientSoftDiceLoss)
+            loss = DC_and_BCE_loss_wClDice(
+                {'batch_dice': self.configuration_manager.batch_dice, 'smooth': 1e-5, 'do_bg': False,
+                 'ddp': self.is_ddp},
+                {},
+                weight_ce=1, weight_dice=1,
+                ignore_label=self.label_manager.ignore_label,
+                dice_class=MemoryEfficientSoftDiceLoss,
+                cldice_weight=0.3, cldice_iter=3, cldice_smooth=1.0
+            )
+
         else:
-            loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
-                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
-                                  ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+            loss = DC_and_CE_loss_wClDice(
+                {'batch_dice': self.configuration_manager.batch_dice, 'smooth': 1e-5, 'do_bg': False,
+                 'ddp': self.is_ddp},
+                {},
+                weight_ce=1, weight_dice=1,
+                ignore_label=self.label_manager.ignore_label,
+                dice_class=MemoryEfficientSoftDiceLoss,
+                cldice_weight=0.3, cldice_iter=3, cldice_smooth=1.0
+            )
 
         if self._do_i_compile():
             loss.dc = torch.compile(loss.dc)

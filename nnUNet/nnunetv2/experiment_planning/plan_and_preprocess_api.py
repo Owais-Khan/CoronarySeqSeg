@@ -27,6 +27,9 @@ def select_experiment_planner(model:str):
     elif model=='unet_ConvLSTM':
         print(f'planning for {model}')
         from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_ConvLSTM import ExperimentPlanner
+    elif model=='unet_se_bottleneck':
+        print(f'planning for {model}')
+        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_se_bottleneck import ExperimentPlanner
     else:
         from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
         print('Model not recognized falliing back to default nnunet')
@@ -69,7 +72,7 @@ def extract_fingerprints(dataset_ids: List[int], fingerprint_extractor_class_nam
 
 
 def plan_experiment_dataset(dataset_id: int,
-                            model:str='unet_se',
+                            model:str=None,
                             gpu_memory_target_in_gb: float = None, preprocess_class_name: str = 'DefaultPreprocessor',
                             overwrite_target_spacing: Optional[Tuple[float, ...]] = None,
                             overwrite_plans_name: Optional[str] = None) -> Tuple[dict, str]:

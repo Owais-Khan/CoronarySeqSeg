@@ -5,8 +5,10 @@ from typing import List, Union, Tuple
 import numpy as np
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, save_json, isfile, maybe_mkdir_p
-from dynamic_network_architectures.architectures.unet import PlainConvUNet
+from nnunetv2.new_architectures.unet_se_with_bottleneck import PlainConvUNet_se_bottleneck
+
 from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_instancenorm
+
 
 from nnunetv2.configuration import ANISO_THRESHOLD
 from nnunetv2.experiment_planning.experiment_planners.network_topology import get_pool_and_conv_props
@@ -48,7 +50,7 @@ class ExperimentPlanner(object):
         self.anisotropy_threshold = ANISO_THRESHOLD
 
         self.UNet_base_num_features = 32
-        self.UNet_class = PlainConvUNet
+        self.UNet_class = PlainConvUNet_se_bottleneck
         # the following two numbers are really arbitrary and were set to reproduce nnU-Net v1's configurations as
         # much as possible
         self.UNet_reference_val_3d = 560000000  # 455600128  550000000
@@ -98,7 +100,7 @@ class ExperimentPlanner(object):
                                    arch_kwargs: dict,
                                    arch_kwargs_req_import: Tuple[str, ...]):
         """
-        Works for PlainConvUNet, ResidualEncoderUNet
+        Works for PlainConvUNet_se, PlainConvUNet_sefc
         """
         a = torch.get_num_threads()
         torch.set_num_threads(get_allowed_n_proc_DA())
@@ -276,6 +278,8 @@ class ExperimentPlanner(object):
         num_stages = len(pool_op_kernel_sizes)
 
         norm = get_matching_instancenorm(unet_conv_op)
+        network_class_name='PlainConvUNet_se_bottleneck'
+
         architecture_kwargs = {
             'network_class_name': self.UNet_class.__module__ + '.' + self.UNet_class.__name__,
             'arch_kwargs': {
@@ -293,6 +297,10 @@ class ExperimentPlanner(object):
                 'dropout_op_kwargs': None,
                 'nonlin': 'torch.nn.LeakyReLU',
                 'nonlin_kwargs': {'inplace': True},
+                #added parameters
+                'deep_supervision':True,
+                'se_reduction_ratio':16,
+                'nonlin_first':False
             },
             '_kw_requires_import': ('conv_op', 'norm_op', 'dropout_op', 'nonlin'),
         }

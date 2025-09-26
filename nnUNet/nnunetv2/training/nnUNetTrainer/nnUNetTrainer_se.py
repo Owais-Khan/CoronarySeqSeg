@@ -1381,3 +1381,21 @@ class nnUNetTrainer(object):
             self.on_epoch_end()
 
         self.on_train_end()
+
+
+import json
+if __name__ == "__main__":
+    base_dir = 'C:/Users/priya/PycharmProjects/nnunet-setup'
+    dataset_id = 'Dataset008_HepaticVessel'
+    plan_path = 'C:/Users/priya/PycharmProjects/nnunet-setup/nnUNet_preprocessed/Dataset008_HepaticVessel/nnUNetPlans.json'
+    json_path = 'C:/Users/priya/PycharmProjects/nnunet-setup/nnUNet_preprocessed/Dataset008_HepaticVessel/dataset.json'
+
+    with open(plan_path, 'r') as f:
+        plans = json.load(f)
+    with open(json_path, 'r') as f:
+        dataset_json = json.load(f)
+
+    configuration = '3d_fullres'
+    fold = 5
+
+    nnUNetTrainer(plans=plans,configuration=configuration,fold=fold,dataset_json=dataset_json).run_training()

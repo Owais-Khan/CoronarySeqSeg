@@ -90,20 +90,6 @@ class ConvDropoutNormReLU(nn.Module):
 
 
 
-class SkipAdapter(nn.Module):
-    def __init__(self, in_ch, out_ch):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, 3, padding=1),
-            nn.InstanceNorm3d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, 3, padding=1),
-            nn.InstanceNorm3d(out_ch),
-        )
-    def forward(self, x):
-        return x + self.net(x)
-
-
 # --- SEBlock3D Module ---
 class SEBlock3D(nn.Module):
     def __init__(self, channels, reduction_ratio=16, conv_op=nn.Conv3d):
@@ -563,4 +549,7 @@ class PlainConvUNet_sefc(nn.Module):
             nn.init.kaiming_normal_(module.weight, a=0, mode='fan_in', nonlinearity='leaky_relu')
             if module.bias is not None:
                 nn.init.constant_(module.bias, 0)
+
+
+
 

@@ -6,6 +6,7 @@ from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.new_architectures.unet_se import PlainConvUNet_se
 from nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
 from nnunetv2.new_architectures.unet_ConvLSTM import PlainConvUNet_ConvLSTM
+from nnunetv2.new_architectures.unet_se_with_bottleneck import PlainConvUNet_se_bottleneck
 from batchgenerators.utilities.file_and_folder_operations import join
 
 
@@ -16,6 +17,8 @@ def import_new_architecture(model: str):
         network = PlainConvUNet_sefc
     elif model == 'unet_ConvLSTM':
         network = PlainConvUNet_ConvLSTM
+    elif model == 'unet_se_bottleneck':
+        network = PlainConvUNet_se_bottleneck
     else:
         print('[Err] Architecture unknown falling back to nnunet')
         network = None
@@ -183,8 +186,9 @@ if __name__ == "__main__":
         input_channels=1,
         output_channels=3,
         allow_init=True,
-        deep_supervision=False,
+        deep_supervision=True,
     )
     data = torch.rand(1, 1,28,128,128)
     target = torch.rand(size=(1, 1,28,128,128))
     outputs = model(data) # this should be a list of torch.Tensor
+    print('output',outputs)

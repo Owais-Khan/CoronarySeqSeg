@@ -1032,8 +1032,8 @@ if __name__ == '__main__':
         allow_tqdm=True
     )
     predictor.initialize_from_trained_model_folder(
-        join(nnUNet_results, 'Dataset004_Hippocampus/nnUNetTrainer_5epochs__nnUNetPlans__3d_fullres'),
-        use_folds=(0,),
+        join(nnUNet_results, 'Dataset008_HepaticVessel/nnUNetTrainer__nnUNetPlans__3d_fullres'),
+        use_folds=(5,),
         checkpoint_name='checkpoint_final.pth',
     )
     # predictor.predict_from_files(join(nnUNet_raw, 'Dataset003_Liver/imagesTs'),
