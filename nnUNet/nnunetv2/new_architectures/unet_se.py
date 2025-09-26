@@ -436,25 +436,16 @@ class UNetDecoder_se(nn.Module):
         :param input_size:
         :return:
         """
-        # first we need to compute the skip sizes. Skip bottleneck because all output feature maps of our ops will at
-        # least have the size of the skip above that (therefore -1)
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):
             skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
             input_size = skip_sizes[-1]
-        # print(skip_sizes)
 
         assert len(skip_sizes) == len(self.stages)
-
-        # our ops are the other way around, so let's match things up
         output = np.int64(0)
         for s in range(len(self.stages)):
-            # print(skip_sizes[-(s+1)], self.encoder.output_channels[-(s+2)])
-            # conv blocks
             output += self.stages[s].compute_conv_feature_map_size(skip_sizes[-(s + 1)])
-            # trans conv
             output += np.prod([self.encoder.output_channels[-(s + 2)], *skip_sizes[-(s + 1)]], dtype=np.int64)
-            # segmentation
             if self.deep_supervision or (s == (len(self.stages) - 1)):
                 output += np.prod([self.num_classes, *skip_sizes[-(s + 1)]], dtype=np.int64)
         return output

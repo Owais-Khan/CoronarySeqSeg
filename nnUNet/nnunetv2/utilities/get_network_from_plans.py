@@ -17,7 +17,7 @@ def import_new_architecture(model: str):
         network = PlainConvUNet_sefc
     elif model == 'unet_ConvLSTM':
         network = PlainConvUNet_ConvLSTM
-    elif model == 'unet_se_bottleneck':
+    elif model == 'unet_se_with_bottleneck':
         network = PlainConvUNet_se_bottleneck
     else:
         print('[Err] Architecture unknown falling back to nnunet')

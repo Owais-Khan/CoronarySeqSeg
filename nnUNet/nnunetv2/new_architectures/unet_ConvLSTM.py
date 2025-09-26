@@ -50,28 +50,19 @@ class ASPP(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        # 1x1 convolution
         self.conv_1x1 = conv_op(in_channels, out_channels, kernel_size=1, bias=conv_bias)
-
-        # Atrous convolutions
         self.atrous_convs = nn.ModuleList()
         for rate in dilation_rates:
             self.atrous_convs.append(
                 conv_op(in_channels, out_channels, kernel_size=3, padding=rate,
                         dilation=rate, bias=conv_bias)
             )
-
-        # Image-level features
         self.image_pool = nn.Sequential(
             nn.AdaptiveAvgPool3d(1) if conv_op == nn.Conv3d else nn.AdaptiveAvgPool2d(1),
             conv_op(in_channels, out_channels, kernel_size=1, bias=conv_bias)
         )
-
-        # Final convolution
         total_channels = out_channels * (len(dilation_rates) + 2)
         self.final_conv = conv_op(total_channels, out_channels, kernel_size=1, bias=conv_bias)
-
-        # Normalization and non-linearity
         self.norm_nonlin = nn.Sequential()
         if norm_op is not None:
             self.norm_nonlin.append(norm_op(out_channels, **norm_op_kwargs))
@@ -80,22 +71,14 @@ class ASPP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         size = x.shape[2:]
-
-        # 1x1 convolution branch
         out_1x1 = self.conv_1x1(x)
-
-        # Atrous convolution branches
         atrous_outs = [out_1x1]
         for conv in self.atrous_convs:
             atrous_outs.append(conv(x))
-
-        # Image pooling branch
         img_pool_out = self.image_pool(x)
         img_pool_out = F.interpolate(img_pool_out, size=size, mode='trilinear' if len(size) == 3 else 'bilinear',
                                      align_corners=False)
         atrous_outs.append(img_pool_out)
-
-        # Concatenate and apply final convolution
         x = torch.cat(atrous_outs, dim=1)
         x = self.final_conv(x)
         x = self.norm_nonlin(x)
@@ -309,8 +292,6 @@ class LightConvLSTMSkip(nn.Module):
                 decoder_feat, size=skip_feat.shape[2:], mode='trilinear', align_corners=False
             )
         x = self.reduce(skip_feat)
-
-        # Initialize hidden state if it's the first pass or spatial size changes
         if self.hidden is None or self.hidden[0].shape[2:] != x.shape[2:]:
             self.hidden = (torch.zeros_like(x), torch.zeros_like(x))
         h, c = self.hidden
@@ -325,15 +306,11 @@ class LightConvLSTMSkip(nn.Module):
         o = torch.sigmoid(o)
         new_c = f * c + i * g
         new_h = o * torch.tanh(new_c)
-
-        # Detach hidden state to prevent gradients from flowing across batches/time steps
         self.hidden = (new_h.detach(), new_c.detach())
 
         restored = self.restore(new_h)
         return skip_feat + restored
 
-
-# ✨ UPDATED: UNet Decoder with Integrated LightConvLSTMSkip
 class PlainConvDecoder_ConvLSTM(nn.Module):
     def __init__(self,
                  encoder: PlainConvEncoder_ConvLSTM,
@@ -411,15 +388,8 @@ class PlainConvDecoder_ConvLSTM(nn.Module):
         for s_idx in range(len(self.stages)):
             x_up = self.transpconvs[s_idx](lres_input)
             skip_from_encoder = skips[-(s_idx + 2)]
-
-            # Refine the skip connection using the decoder's upsampled feature as context
             enriched_skip = self.lstm_skips[s_idx](skip_from_encoder, x_up)
-
-            # Apply attention to the newly enriched skip connection
             attended_skip = self.se_gates[s_idx](x=enriched_skip, g=x_up)
-
-            # The original code added the attended skip back to the original skip; here we simplify
-            # by directly using the output of the attention gate.
             x_concat = torch.cat((x_up, attended_skip), dim=1)
 
             current_stage_output = self.stages[s_idx](x_concat)
@@ -445,25 +415,16 @@ class PlainConvDecoder_ConvLSTM(nn.Module):
         :param input_size:
         :return:
         """
-        # first we need to compute the skip sizes. Skip bottleneck because all output feature maps of our ops will at
-        # least have the size of the skip above that (therefore -1)
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):
             skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
             input_size = skip_sizes[-1]
-        # print(skip_sizes)
-
         assert len(skip_sizes) == len(self.stages)
 
-        # our ops are the other way around, so let's match things up
         output = np.int64(0)
         for s in range(len(self.stages)):
-            # print(skip_sizes[-(s+1)], self.encoder.output_channels[-(s+2)])
-            # conv blocks
             output += self.stages[s].compute_conv_feature_map_size(skip_sizes[-(s + 1)])
-            # trans conv
             output += np.prod([self.encoder.output_channels[-(s + 2)], *skip_sizes[-(s + 1)]], dtype=np.int64)
-            # segmentation
             if self.deep_supervision or (s == (len(self.stages) - 1)):
                 output += np.prod([self.num_classes, *skip_sizes[-(s + 1)]], dtype=np.int64)
         return output
@@ -536,52 +497,3 @@ class PlainConvUNet_ConvLSTM(nn.Module):
         return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(
             input_size
         )
-
-
-
-
-
-
-# --- Main Execution and Helper Functions (for standalone testing) ---
-def extract_args(json_path, plan_path):
-    with open(plan_path) as f:
-        plans = json.load(f)
-    with open(json_path) as f:
-        ds = json.load(f)
-
-    config_key = '3d_fullres'
-    if config_key not in plans['configurations']: config_key = list(plans['configurations'].keys())[0]
-    arch = plans['configurations'][config_key]['architecture']['arch_kwargs']
-    dim = len(arch['strides'][1]) if isinstance(arch['strides'][1], (list, tuple)) else 3
-    conv_op_res, norm_op_res = (nn.Conv3d, nn.InstanceNorm3d) if dim == 3 else (nn.Conv2d, nn.InstanceNorm2d)
-    return dict(n_stages=arch['n_stages'], features_per_stage=arch['features_per_stage'],
-                n_conv_per_stage=arch['n_conv_per_stage'], n_conv_per_stage_decoder=arch['n_conv_per_stage_decoder'],
-                input_channels=len(ds.get('channel_names', {'0': 'default'})),
-                num_classes=len(ds.get('labels', {'0': 'bg', '1': 'fg'})), kernel_sizes=arch['kernel_sizes'],
-                strides=arch['strides'], deep_supervision=True, conv_op=conv_op_res,
-                conv_bias=arch.get('conv_bias', True),
-                norm_op=norm_op_res, norm_op_kwargs=arch.get('norm_op_kwargs', {"eps": 1e-05, "affine": True}),
-                dropout_op=None, dropout_op_kwargs=None,
-                nonlin=nn.LeakyReLU, nonlin_kwargs={"inplace": True}, nonlin_first=False)
-
-
-def test_run(model, model_name, input_shape=(1, 1, 32, 128, 128), device="cuda"):
-    model = model.to(device)
-    model.eval()
-    x = torch.randn(input_shape).to(device)
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"\n--- {model_name} ---")
-    print(f"Testing with input shape: {x.shape}")
-    print(f"Total Trainable Params: {total_params:,}")
-    try:
-        with torch.no_grad():
-            output = model(x)
-        output_shape = output[0].shape if isinstance(output, list) else output.shape
-        print(f"Output shape: {output_shape}")
-        print("Model ran successfully! ✅")
-    except Exception as e:
-        import traceback
-        print(f"An error occurred during model test run: {e}")
-        traceback.print_exc()
-
-

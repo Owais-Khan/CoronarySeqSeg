@@ -115,9 +115,6 @@ class SEBlock3D(nn.Module):
         return x_ch * spa_mask
 
 
-# ---------------------------------------------------------------------
-# Stacked conv blocks (first conv may carry the stage stride)
-# ---------------------------------------------------------------------
 class StackedConvBlocks(nn.Module):
     def __init__(self,
                  num_convs: int,
@@ -168,9 +165,6 @@ class StackedConvBlocks(nn.Module):
         return out
 
 
-# ---------------------------------------------------------------------
-# NEW: ASPP Bridge (dimension-agnostic; with image-level pooling branch)
-# ---------------------------------------------------------------------
 class ASPP(nn.Module):
     def __init__(self,
                  conv_op: Type[_ConvNd],
@@ -244,25 +238,9 @@ class ASPP(nn.Module):
         return y
 
     def compute_conv_feature_map_size(self, input_size):
-        # all branches output same spatial size as input
-        # count per-branch outputs + projection
         def vol(sz): return int(np.prod(sz))
-        # assume out_channels of b0 as representative of all branches
-        # this is an approximation consistent with other blocks here
-        # we can't access weight shapes directly without init, so infer by usage:
-        # Let C_out be the proj out channels; but we don't expose it; compute via forward is not allowed.
-        # Use a simple proxy: treat each branch as producing 'k' channels equal to the proj out.
-        # For accounting, returning 3 * volume terms is sufficient.
-        # Better: pass a hint via an attribute when constructed:
-        return np.int64(0)  # keep ASPP out of memory accounting if you prefer
-        # If you prefer to include:
-        # return np.prod([self.proj.out_channels, *input_size], dtype=np.int64) \
-        #        + (len(self.b_dil) + 2) * np.prod([self.b0.out_channels, *input_size], dtype=np.int64)
+        return np.int64(0)
 
-
-# ---------------------------------------------------------------------
-# Encoder with per-stage SE; returns SE-refined skips
-# ---------------------------------------------------------------------
 class PlainConvEncoder_se(nn.Module):
     def __init__(self,
                  input_channels: int,
@@ -361,10 +339,6 @@ class PlainConvEncoder_se(nn.Module):
             cur = [i // j for i, j in zip(cur, self.strides_for_stages[s])]
         return out
 
-
-# ---------------------------------------------------------------------
-# Decoder with SE-gated skip (Attention-like), concat fusion
-# ---------------------------------------------------------------------
 class UNetDecoder_se(nn.Module):
     def __init__(self,
                  encoder: PlainConvEncoder_se,
@@ -421,16 +395,14 @@ class UNetDecoder_se(nn.Module):
         self.se_gates = nn.ModuleList(gates)
 
     def forward(self, skips: List[torch.Tensor]):
-        # NOTE: we assume the last item in `skips` has already been ASPP-processed by the UNet wrapper.
         lres = skips[-1]
         seg_outs = []
 
         for i in range(len(self.stages)):
             x_up = self.transpconvs[i](lres)
             skip = skips[-(i + 2)]
-            # context-conditioned SE on the skip using x_up
             att = self.se_gates[i](x=skip, g=x_up)
-            fused_skip = skip + att  # amplification-only; switch to `att` for true suppression
+            fused_skip = skip + att
             x = torch.cat([x_up, fused_skip], dim=1)
             x = self.stages[i](x)
 
@@ -461,9 +433,6 @@ class UNetDecoder_se(nn.Module):
         return out
 
 
-# ---------------------------------------------------------------------
-# U-Net(SE) with ASPP bridge
-# ---------------------------------------------------------------------
 class PlainConvUNet_se_bottleneck(nn.Module):
     def __init__(self,
                  input_channels: int,
@@ -530,13 +499,10 @@ class PlainConvUNet_se_bottleneck(nn.Module):
         return self.decoder(skips)
 
     def compute_conv_feature_map_size(self, input_size):
-        # encoder + ASPP at bottleneck + decoder
         enc = self.encoder.compute_conv_feature_map_size(input_size)
-        # compute bottleneck spatial size
         cur = input_size
         for s in self.encoder.strides_for_stages:
             cur = [i // j for i, j in zip(cur, s)]
-        # include ASPP projection output (approximate)
         aspp = np.prod([self.encoder.output_channels[-1], *cur], dtype=np.int64)
         dec = self.decoder.compute_conv_feature_map_size(input_size)
         return enc + aspp + dec

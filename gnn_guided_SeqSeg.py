@@ -17,7 +17,7 @@ from scipy.ndimage import distance_transform_edt, map_coordinates
 from SeqSeg.seqseg.modules.centerline import post_process_centerline
 from SeqSeg.seqseg.modules.vtk_functions import write_vtk_polydata
 
-from gnn_model.gnn_model import gm_load, gm_predict_graph, save_predicted_graph_to_vtp
+from gnn_model import gm_load, gm_predict_graph, save_predicted_graph_to_vtp
 try:
     import skfmm
 except Exception as e:

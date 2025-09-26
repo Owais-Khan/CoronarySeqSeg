@@ -1,0 +1,61 @@
+sample_percent:  30.0
+image_glob:  "*.nii.gz"
+
+# Node sampling (from prob/seg only)
+prob_threshold: 0.35
+voxel_subsample_zyx: (4,4,4)
+include_shell_dilate_vox: 1
+
+# Band where outside nodes are allowed
+nms_radius_vox: (1,1,1)
+target_outside_ratio: 0.35  # cap outside fraction
+
+# Graph edges
+knn_k: 12
+knn_radius_mm: 6.0
+max_edge_len_mm: 8.0
+
+# Gap/bridge proposals
+gap_r_mm: 40.0
+gap_cos_min: 0.60
+gap_dr_mm_max: 10
+
+# Edge features (geometry-only)
+use_line_integrals: True
+n_line_samples: 24
+vesselness_floor: 0.5
+
+# Labeling from GT connectivity
+gt_dilate_vox: 1
+pos_path_max_mm: 15.0
+
+# Training
+train_enable: True
+neg_per_pos: 8
+batch_size_cases: 1
+max_epochs: 400
+base_lr: 1e-3
+weight_decay: 3e-4
+amp: True
+seed: 100
+
+# Inference / export
+infer_enable: True
+edge_prob_thresh: 0.6
+add_back_thresh: 0.85
+mst_lambda_len_inv: 0.05
+export_candidates_vtp: True
+export_mst_preview_vtp: True
+export_predicted_vtp: True
+
+# Vessel belt (kept)
+belt_shells_mm: (0.8, 1.6, 2.4, -0.6)
+belt_step_mm: 1.0
+belt_prob_max: 0.50
+belt_vesselness_min: 0.12
+belt_band_half_mm: 0.5
+belt_nms_vox: (1, 1, 1)
+belt_max_points: 20000
+
+# Checkpoint
+ckpt_name: str = "gnn_checkpoint.pt"

@@ -27,8 +27,8 @@ except Exception:
 # =========================
 # CONFIG
 # =========================
-PRED_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\testing\Dataset003_CoronaryMed\se_pred"
-LABEL_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\testing\Dataset003_CoronaryMed\labels"
+PRED_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\helper\comparision\compare"
+LABEL_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\helper\comparision\raw"
 OUT_DIR   = r"C:\Users\priya\PycharmProjects\nnunet-setup\testing\Dataset003_CoronaryMed\evaluation_metrics_se"
 os.makedirs(OUT_DIR, exist_ok=True)
 
