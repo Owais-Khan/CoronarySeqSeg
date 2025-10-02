@@ -78,41 +78,59 @@ class ConvDropoutNormReLU(nn.Module):
 # SE (channel) + lightweight spatial gate (CBAM-style 1×k×k)
 # ---------------------------------------------------------------------
 class SEBlock3D(nn.Module):
-    def __init__(self, channels, reduction_ratio=16, conv_op=nn.Conv3d):
-        super().__init__()
-        red = max(1, channels // reduction_ratio)
+    def __init__(self, channels: int, reduction_ratio: int = 16, conv_op: Type[_ConvNd] = nn.Conv3d):
+        super(SEBlock3D, self).__init__()
+        self.channels = channels
+        self.reduction_ratio = reduction_ratio
+        reduced_channels = max(1, channels // reduction_ratio)
+
         dim = convert_conv_op_to_dim(conv_op)
-        if dim == 3: pool = nn.AdaptiveAvgPool3d(1)
-        elif dim == 2: pool = nn.AdaptiveAvgPool2d(1)
-        else: pool = nn.AdaptiveAvgPool1d(1)
-        self.pool = pool
+        if dim == 3:
+            self.squeeze = nn.AdaptiveAvgPool3d(1)
+        elif dim == 2:
+            self.squeeze = nn.AdaptiveAvgPool2d(1)
+        elif dim == 1:
+            self.squeeze = nn.AdaptiveAvgPool1d(1)
+        else:
+            raise ValueError(f"Unsupported conv_op dimension for SEBlock: {dim}")
 
-        self.channel_exc = nn.Sequential(
-            nn.Linear(channels, red, bias=False),
+        self.excitation = nn.Sequential(
+            nn.Linear(channels, reduced_channels, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(red, channels, bias=False),
-            nn.Sigmoid()
-        )
-
-        # simple spatial gate (single-channel conv)
-        k = 7 if dim > 1 else 3
-        pad = k // 2
-        self.spatial_gate = nn.Sequential(
-            conv_op(1, 1, kernel_size=k, padding=pad, bias=False),
+            nn.Linear(reduced_channels, channels, bias=False),
             nn.Sigmoid()
         )
         self.dim = dim
 
-    def forward(self, x, g=None):
-        b, c = x.shape[:2]
-        # Channel gate
-        chn = self.pool(x).view(b, c)
-        chn = self.channel_exc(chn).view(b, c, *([1] * self.dim))
-        x_ch = x * chn
-        # Spatial gate
-        spa = x_ch.mean(dim=1, keepdim=True)
-        spa_mask = self.spatial_gate(spa)
-        return x_ch * spa_mask
+    def forward(self, x: torch.Tensor, g: torch.Tensor = None):
+        b, c, *spatial_dims = x.shape
+        if c != self.channels:
+            print(
+                f"Warning (SEBlock3D): Input tensor x has {c} channels, but SEBlock was initialized with {self.channels} channels. This will likely cause an error in nn.Linear.")
+            assert c == self.channels, "Channel mismatch in SEBlock excitation."
+
+        feature_for_squeeze = x
+        if g is not None:
+            if x.shape[2:] != g.shape[2:]:
+                interp_mode = 'trilinear' if self.dim == 3 else ('bilinear' if self.dim == 2 else 'linear')
+                g_aligned = F.interpolate(g, size=x.shape[2:], mode=interp_mode, align_corners=False)
+            else:
+                g_aligned = g
+
+            if x.shape[1] != g_aligned.shape[1]:
+                print(
+                    f"Warning (SEBlock3D): Channels of x ({x.shape[1]}) and g ({g_aligned.shape[1]}) for addition differ. Ensure channel counts match or implement projection for g.")
+            else:  # Channels match
+                feature_for_squeeze = x + g_aligned
+
+        y = self.squeeze(feature_for_squeeze).view(b, c)
+        y_excited = self.excitation(y)
+
+        scale_factors_shape = [b, c] + [1] * self.dim
+        scale_factors = y_excited.view(*scale_factors_shape)
+
+        return x * scale_factors.expand_as(x)
+
 
 
 class StackedConvBlocks(nn.Module):

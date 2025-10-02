@@ -1,11 +1,8 @@
 from __future__ import annotations
-import os, glob, time
 from dataclasses import dataclass, asdict
 from typing import List, Tuple, Optional, Dict
 from contextlib import nullcontext
 from collections import defaultdict
-import argparse
-import sys
 import numpy as np
 import nibabel as nib
 import SimpleITK as sitk
@@ -14,6 +11,9 @@ from scipy.ndimage import (
     gaussian_laplace,
     binary_dilation,
 )
+import os, yaml
+from dataclasses import fields, is_dataclass, replace
+from typing import get_origin, Tuple, List
 import networkx as nx
 import torch
 import torch.nn as nn
@@ -31,9 +31,6 @@ except Exception:
 
 
 #Config
-
-@dataclass
-@dataclass
 class CFG:
 
 
@@ -190,6 +187,45 @@ def tangents_from_edt(edt_zyx: np.ndarray, coords_zyx: np.ndarray) -> np.ndarray
     t = -v / n
     return np.ascontiguousarray(t, dtype=np.float32)
 
+def _parse_args():
+    p = argparse.ArgumentParser("GNN model runner")
+    p.add_argument("--cfg", required=False, help="Path to YAML config file")
+    return p.parse_args()
+
+def _coerce(value, anno):
+    origin = get_origin(anno)
+    if origin is tuple or origin is Tuple:
+        return tuple(value) if isinstance(value, (list, tuple)) else (value,)
+    if origin is list or origin is List:
+        return list(value) if isinstance(value, (list, tuple)) else [value]
+    if anno in (int, float, bool, str):
+        return anno(value)
+    return value
+def _norm_path(v: str) -> str:
+    v = os.path.expanduser(os.path.expandvars(str(v)))
+    return os.path.abspath(v)
+
+def _looks_like_path(key: str) -> bool:
+    key = key.lower()
+    return any(s in key for s in ["dir", "folder", "path", "out"])
+
+def load_cfg_from_yaml(path: str, base_cfg) -> "CFG":
+    with open(os.path.abspath(os.path.expanduser(path)), "r") as f:
+        y = yaml.safe_load(f) or {}
+    kv = {}
+    fmeta = {f.name: f.type for f in fields(base_cfg)}
+    for k, v in y.items():
+        if k not in fmeta:
+            print(f"[cfg] ignoring unknown key: {k}")
+            continue
+        vv = _coerce(v, fmeta[k])
+        if isinstance(vv, str) and _looks_like_path(k):
+            vv = _norm_path(vv)
+        kv[k] = vv
+    return replace(base_cfg, **kv)
+
+#Graph build helpers
+
 def knn_edges(pos_mm: np.ndarray, k: int, r_mm: float, max_len_mm: float) -> np.ndarray:
     if len(pos_mm) == 0:
         return np.zeros((2,0), np.int64)
@@ -304,7 +340,7 @@ def _mm_to_step_zyx(target_mm: float, sp_zyx: np.ndarray) -> Tuple[int,int,int]:
 
 #Graph build helpers
 
-def belt_nodes_from_edt_and_vesselness(
+def belt_nodes_from_edt(
     pred_np: np.ndarray,
     pred_thr: np.ndarray,
     edt_outside_mm: np.ndarray,
@@ -374,7 +410,7 @@ def build_nodes(pred_np: np.ndarray, sitk_img: sitk.Image, cfg: CFG):
     vess_np     = prob_ridge_log(pred_np, floor=cfg.vesselness_floor)
 
 
-    coords_belt = belt_nodes_from_edt_and_vesselness(
+    coords_belt = belt_nodes_from_edt(
         pred_np=pred_np,
         pred_thr=pred_thr,
         edt_outside_mm=edt_outside,
@@ -500,8 +536,8 @@ def label_edges_by_gt_graph(cand_ei: np.ndarray,
     return np.ascontiguousarray(labels, dtype=np.uint8)
 
 
-#EdgeClassifier + Spline Setup
-class ECCEdgeClassifier(nn.Module):
+#GNN model
+class gnn_model(nn.Module):
     def __init__(self, in_node: int, edge_in: int,
                  hidden: int = 96, layers: int = 3, dropout: float = 0.2):
         super().__init__()
@@ -653,9 +689,7 @@ def make_graph_case(img_p: str, gt_p: str, pred_p: str, cfg: CFG) -> Optional[Da
     )
 
 
-# =========================
-# Export VTP
-# =========================
+#Export helpers
 def _assemble_polylines(n_nodes: int, edge_index_np: np.ndarray) -> List[List[int]]:
     if edge_index_np.size == 0: return []
     u = edge_index_np[0].tolist(); v = edge_index_np[1].tolist()
@@ -857,7 +891,7 @@ def process_case_build_only(img_p: str, gt_p: str, pred_p: str, cfg: CFG):
 
 #inference
 
-def process_case_infer(img_p: str, pred_p: str, model: ECCEdgeClassifier, cfg: CFG, device: torch.device):
+def process_case_infer(img_p: str, pred_p: str, model: gnn_model, cfg: CFG, device: torch.device):
     name = os.path.basename(pred_p).replace(".nii.gz","").replace("_0000","")
     prd  = read_nii_safe(pred_p)
     pred_np = sitk_to_np(prd).astype(np.float32)
@@ -943,7 +977,7 @@ def gm_load(ckpt_path: Optional[str] = None,
     default_edge_in = 6  # geometry-only
     in_node = int(ckpt.get('in_node', default_in_node))
     edge_in = int(ckpt.get('edge_in', default_edge_in))
-    model = ECCEdgeClassifier(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(dev)
+    model = gnn_model(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(dev)
     state_key = 'model_state' if 'model_state' in ckpt else 'model'
     model.load_state_dict(ckpt[state_key], strict=True)
     model.eval()
@@ -1079,59 +1113,6 @@ def gm_predict_graph(
     return G
 
 #main
-def _parse_args():
-    p = argparse.ArgumentParser("GNN model runner")
-    p.add_argument("--cfg", required=False, help="Path to YAML config file")
-    return p.parse_args()
-
-# deps
-import os, yaml
-from dataclasses import fields, is_dataclass, replace
-from typing import get_origin, Tuple, List
-
-# helper: type-aware coercion (handles tuples in your CFG)
-def _coerce(value, anno):
-    origin = get_origin(anno)
-    # tuple/list fields in CFG (e.g., voxel_subsample_zyx, belt_shells_mm)
-    if origin is tuple or origin is Tuple:
-        # accept list or tuple in YAML
-        return tuple(value) if isinstance(value, (list, tuple)) else (value,)
-    if origin is list or origin is List:
-        return list(value) if isinstance(value, (list, tuple)) else [value]
-    # simple scalars
-    if anno in (int, float, bool, str):
-        return anno(value)
-    # fall back (dataclass, dict, etc.)
-    return value
-
-# normalize paths for any key that looks like a path
-def _norm_path(v: str) -> str:
-    v = os.path.expanduser(os.path.expandvars(str(v)))
-    return os.path.abspath(v)
-
-def _looks_like_path(key: str) -> bool:
-    key = key.lower()
-    return any(s in key for s in ["dir", "folder", "path", "out"])
-
-def load_cfg_from_yaml(path: str, base_cfg) -> "CFG":
-    with open(os.path.abspath(os.path.expanduser(path)), "r") as f:
-        y = yaml.safe_load(f) or {}
-    # build a dict of updated fields with type coercion
-    kv = {}
-    fmeta = {f.name: f.type for f in fields(base_cfg)}
-    for k, v in y.items():
-        if k not in fmeta:
-            print(f"[cfg] ignoring unknown key: {k}")
-            continue
-        vv = _coerce(v, fmeta[k])
-        if isinstance(vv, str) and _looks_like_path(k):
-            vv = _norm_path(vv)
-        kv[k] = vv
-    # return a new CFG with YAML-applied values
-    return replace(base_cfg, **kv)
-
-
-
 import os, glob, time, argparse
 import numpy as np
 import torch
@@ -1237,7 +1218,7 @@ def main():
         loader = GeoDataLoader(items, batch_size=cfg.batch_size_cases, shuffle=True)
         in_node = int(items[0].x.shape[1])
         edge_in = int(items[0].edge_attr.shape[1])
-        model = ECCEdgeClassifier(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(device)
+        model = gnn_model(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=cfg.base_lr, weight_decay=cfg.weight_decay)
         scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp)
 
@@ -1260,7 +1241,7 @@ def main():
                 ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
                 in_node = int(ckpt.get("in_node", 5))
                 edge_in = int(ckpt.get("edge_in", 6))
-                model = ECCEdgeClassifier(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(device)
+                model = gnn_model(in_node=in_node, edge_in=edge_in, hidden=96, layers=3, dropout=0.2).to(device)
                 model.load_state_dict(ckpt["model_state"])
                 model.eval()
             else:

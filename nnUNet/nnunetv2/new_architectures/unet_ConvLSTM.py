@@ -116,7 +116,7 @@ class SEBlock3D(nn.Module):
         b, c, *spatial_dims = x.shape
         if c != self.channels:
             print(
-                f"Warning (SEBlock3D): Input tensor x has {c} channels, but SEBlock was initialized with {self.channels} channels. This will likely cause an error in nn.Linear.")
+                f"Warning (SEBlock3D): Input tensor x has {c} channels, but SEBlock was initialized with {self.channels}")
             assert c == self.channels, "Channel mismatch in SEBlock excitation."
 
         feature_for_squeeze = x
@@ -129,8 +129,8 @@ class SEBlock3D(nn.Module):
 
             if x.shape[1] != g_aligned.shape[1]:
                 print(
-                    f"Warning (SEBlock3D): Channels of x ({x.shape[1]}) and g ({g_aligned.shape[1]}) for addition differ. Ensure channel counts match or implement projection for g.")
-            else:  # Channels match
+                    f"Warning (SEBlock3D): Channels of x ({x.shape[1]}) and g ({g_aligned.shape[1]})")
+            else:
                 feature_for_squeeze = x + g_aligned
 
         y = self.squeeze(feature_for_squeeze).view(b, c)

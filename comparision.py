@@ -15,30 +15,22 @@ from monai.metrics import (
     SurfaceDistanceMetric,
     MeanIoU,
 )
-from monai.losses import SoftclDiceLoss  # fallback if skimage not available
-
-# Optional: true clDice metric via skeletonization
-try:
-    from skimage.morphology import skeletonize_3d
-    _HAS_SKIMAGE = True
-except Exception:
-    _HAS_SKIMAGE = False
-
+from monai.losses import SoftclDiceLoss
 # =========================
-# CONFIG
+# CONF``IG
 # =========================
-PRED_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\helper\comparision\compare"
-LABEL_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\helper\comparision\raw"
-OUT_DIR   = r"C:\Users\priya\PycharmProjects\nnunet-setup\testing\Dataset003_CoronaryMed\evaluation_metrics_se"
+PRED_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\final_tests\sample\pred"
+LABEL_DIR = r"C:\Users\priya\PycharmProjects\nnunet-setup\final_tests\sample\label"
+OUT_DIR   = r"C:\Users\priya\PycharmProjects\nnunet-setup\testing\Dataset003_CoronaryMed"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 BATCH_SIZE = 1
 NUM_WORKERS = 1
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-SPACING_MM = (1.5, 1.5, 2.0)     # evaluation spacing (kept fixed)
-SURF_TOL_MM = 1.0                # Surface Dice tolerance in mm
-PROB_THRESHOLD = None            # set to 0.5 if your preds are probabilities
+SPACING_MM = (1.5, 1.5, 2.0)
+SURF_TOL_MM = 1.0
+PROB_THRESHOLD = None
 
 # =========================
 # HELPERS
@@ -46,10 +38,13 @@ PROB_THRESHOLD = None            # set to 0.5 if your preds are probabilities
 def list_pairs(pred_dir: str, label_dir: str) -> List[Tuple[str, str]]:
     preds = sorted(glob.glob(os.path.join(pred_dir, "*.nii.gz")))
     gts   = sorted(glob.glob(os.path.join(label_dir, "*.nii.gz")))
+
     gt_map = {os.path.basename(x): x for x in gts}
+
     pairs = []
     for p in preds:
         bn = os.path.basename(p)
+        bn=bn[:6] + '.nii.gz'
         if bn in gt_map:
             pairs.append((p, gt_map[bn]))
     return pairs
@@ -91,14 +86,6 @@ def foreground_np(one_hot: torch.Tensor) -> np.ndarray:
     """Extract foreground (class-1) binary array as numpy uint8 from one-hot (2,...) tensor."""
     return (one_hot[1] > 0.5).cpu().numpy().astype(np.uint8)
 
-def compute_cldice_metric(pred_fg: np.ndarray, gt_fg: np.ndarray) -> float:
-    """True clDice metric using 3D skeletons (requires scikit-image)."""
-    eps = 1e-8
-    skel_pred = skeletonize_3d(pred_fg.astype(bool)).astype(np.uint8)
-    skel_gt   = skeletonize_3d(gt_fg.astype(bool)).astype(np.uint8)
-    tprec = (skel_pred & gt_fg).sum() / (skel_pred.sum() + eps)
-    tsens = (skel_gt & pred_fg).sum() / (skel_gt.sum() + eps)
-    return float(2.0 * tprec * tsens / (tprec + tsens + eps))
 
 def compute_cldice_fallback_torch(pred_fg_t: torch.Tensor, gt_fg_t: torch.Tensor) -> float:
     """
@@ -182,11 +169,7 @@ def main():
         # clDice metric
         pred_fg_np = foreground_np(pred_1h[0])
         lab_fg_np  = foreground_np(lab_1h[0])
-        if _HAS_SKIMAGE:
-            cldice_val = compute_cldice_metric(pred_fg_np, lab_fg_np)
-        else:
-            # fallback using SoftclDiceLoss → score = 1 - loss
-            cldice_val = compute_cldice_fallback_torch(pred_fg, lab_fg)
+        cldice_val = compute_cldice_fallback_torch(pred_fg, lab_fg)
 
         rows.append({
             "Image": case_id,
