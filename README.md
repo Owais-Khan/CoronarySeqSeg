@@ -1,1 +1,2 @@
-"# modified_nnunet_SeqSeg" 
+Modified nnunet and Seqseg pipeline
+
