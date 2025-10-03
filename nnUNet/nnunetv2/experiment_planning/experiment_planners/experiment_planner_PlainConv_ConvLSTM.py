@@ -299,7 +299,7 @@ class ExperimentPlanner(object):
                 'nonlin_kwargs': {'inplace': True},
                 #added parameters
                 'deep_supervision':True,
-                'se_reduction_ratio':16,
+                'se_reduction_ratio':8,
                 'nonlin_first':False
             },
             '_kw_requires_import': ('conv_op', 'norm_op', 'dropout_op', 'nonlin'),
