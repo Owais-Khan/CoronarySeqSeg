@@ -1,16 +1,18 @@
 # Modified nnunet and Seqseg pipeline.
 
+<img width="1520" height="945" alt="image" src="https://github.com/user-attachments/assets/361f8613-ba0f-4263-9c99-3163cfd320ed" />
+
 
 This project enhances vascular image segmentation and sequential tracing by combining a modified nnU-Net with a GNN-guided SeqSeg pipeline. First, we introduce three vessel-specific nnU-Net models that surpass the baseline accuracy. Next, we train a graph neural network to produce topology-aware edge probabilities that build robust centerlines and guide SeqSeg during tracing. Finally, our modified SeqSeg utilizes the GNN’s edge predictions to improve traversal—bridging small gaps and suppressing false branches—resulting in higher-quality vessel segmentations and more reliable vessel trees.
 
-
-<img width="1179" height="660" alt="Modified nnunet and seqseg pipeline" src="https://github.com/user-attachments/assets/3c3f8f4f-eb96-4dbd-b821-bee01ae27207" />
 
 Refer to 'x' for more details about nnUNet architectures
 Refer to 'x' for GNN working
 Refer to 'x' for SeqSeg explanation
 
 ## Instructions
+
+<img width="1751" height="457" alt="image" src="https://github.com/user-attachments/assets/31b0cb3d-3be9-42ea-87e3-8cfbee7ceaba" />
 
 ### Step 1: Use the standard nnU-Net v2 workflow (same install, dataset layout, training, etc), with one extra flag during planning and preprocessing: -model.
 
@@ -49,6 +51,8 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 - --dataset_id : nnUNet train dataset-it
 - --fold : nnUNet fold
 - --img_ext : image extension
+
+
 
 
 
