@@ -41,11 +41,14 @@ Args
 
 python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs/seqseg --config_file ./configs/seqseg.yaml --dataset_id  Dataset003_Coronary --fold 5 --img_ext .nii.gz
 
-- --data_dir : dataset root (nnU-Net layout)
-- --output_dir : where traced centerlines/results are written
+- --pred_dir : Directory to retrieve Segmentation images
+- --data_dir : Directory to retrieve raw images
+- --output_dir : Directory for results
 - --config_file : SeqSeg configuration YAML
-- --dataset_id : same id as above
-- --fold : same fold as above
+- --gnn_folder : GNN folder path
+- --dataset_id : nnUNet train dataset-it
+- --fold : nnUNet fold
 - --img_ext : image extension
+
 
 
