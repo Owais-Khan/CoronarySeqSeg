@@ -34,8 +34,8 @@ Args
 
 - --gnn-folder : directory to save checkpoints & config
 - --pred-out : directory for GNN edge predictions
-- --dataset-id : your nnU-Net dataset id (e.g., Dataset003_CoronaryMed)
-- --fold : fold number for the nnU-Net predictor (e.g., 5)
+- --dataset-id : your nnU-Net dataset id
+- --fold : fold number for the nnU-Net predictor
 
 ### Step 3: GNN guided SeqSeg
 
@@ -46,6 +46,6 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 - --config_file : SeqSeg configuration YAML
 - --dataset_id : same id as above
 - --fold : same fold as above
-- --img_ext : image extension (e.g., .nii.gz)
+- --img_ext : image extension
 
 
