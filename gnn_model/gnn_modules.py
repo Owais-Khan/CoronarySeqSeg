@@ -11,6 +11,7 @@ from scipy.ndimage import (
     gaussian_laplace,
     binary_dilation,
 )
+import glob
 import os, yaml
 from dataclasses import fields, is_dataclass, replace
 from typing import get_origin, Tuple, List
@@ -42,6 +43,72 @@ def _nifti_is_readable(path: str) -> bool:
             return True
         except Exception:
             return False
+class CFG:
+
+
+    sample_percent: float = 30.0
+    image_glob: str = "*.nii.gz"
+
+    # Node sampling (from prob/seg only)
+    prob_threshold: float = 0.35
+    voxel_subsample_zyx: Tuple[int,int,int] = (4,4,4)
+    include_shell_dilate_vox: int = 1
+
+    # Band where outside nodes are allowed
+    nms_radius_vox: Tuple[int,int,int] = (1,1,1)
+    target_outside_ratio: float = 0.35  # cap outside fraction
+
+    # Graph edges
+    knn_k: int = 12
+    knn_radius_mm: float = 6.0
+    max_edge_len_mm: float = 8.0
+
+    # Gap/bridge proposals
+    gap_r_mm: float = 40.0
+    gap_cos_min: float = 0.60
+    gap_dr_mm_max: float = 10
+
+    # Edge features (geometry-only)
+    use_line_integrals: bool = True
+    n_line_samples: int = 24
+    vesselness_floor: float = 0.5
+
+    # Labeling from GT connectivity
+    gt_dilate_vox: int = 1
+    pos_path_max_mm: float = 15.0
+
+    # Training
+    train_enable: bool = True
+    neg_per_pos: int = 8
+    batch_size_cases: int = 1
+    max_epochs: int = 400
+    base_lr: float = 1e-3
+    weight_decay: float = 3e-4
+    amp: bool = True
+    seed: int = 100
+
+    # Inference / export
+    infer_enable: bool = True
+    edge_prob_thresh: float = 0.6
+    add_back_thresh: float = 0.85
+    mst_lambda_len_inv: float = 0.05
+    export_candidates_vtp: bool = True
+    export_mst_preview_vtp: bool = True
+    export_predicted_vtp: bool = True
+
+    # Vessel belt (kept)
+    belt_shells_mm: Tuple[float, ...] = (0.8, 1.6, 2.4, -0.6)
+    belt_step_mm: float = 1.0
+    belt_prob_max: float = 0.50
+    belt_vesselness_min: float = 0.12
+    belt_band_half_mm: float = 0.5
+    belt_nms_vox: Tuple[int, int, int] = (1, 1, 1)
+    belt_max_points: int = 20000
+
+    # Checkpoint
+    ckpt_name: str = "gnn_checkpoint.pt"
+
+cfg = CFG()
 
 def read_nii_safe(path: str) -> sitk.Image:
     try:
@@ -115,10 +182,6 @@ def tangents_from_edt(edt_zyx: np.ndarray, coords_zyx: np.ndarray) -> np.ndarray
     t = -v / n
     return np.ascontiguousarray(t, dtype=np.float32)
 
-def _parse_args():
-    p = argparse.ArgumentParser("GNN model runner")
-    p.add_argument("--cfg", required=False, help="Path to YAML config file")
-    return p.parse_args()
 
 def _coerce(value, anno):
     origin = get_origin(anno)
@@ -928,23 +991,55 @@ def save_predicted_graph_to_vtp(G: nx.Graph, out_path: str):
 
 import copy
 
-def _merge_cfg(runtime_cfg, ckpt_cfg_dict: dict, prefer: str = "runtime"):
-    base = copy.deepcopy(runtime_cfg)
-    if ckpt_cfg_dict is None:
-        return base
-    r = dict(asdict(base))
+def _cfg_to_dict(obj):
+    if obj is None:
+        return {}
+    if is_dataclass(obj):
+        return asdict(obj)
+    if isinstance(obj, dict):
+        return copy.deepcopy(obj)
+    if hasattr(obj, "__dict__"):
+        # last resort: grab public attributes
+        return {k: copy.deepcopy(v) for k, v in obj.__dict__.items() if not k.startswith("__")}
+    return {}
+
+
+def _merge_cfg(runtime_cfg, ckpt_cfg_dict: dict | None, prefer: str = "runtime"):
+    # 1) start from defaults
+    base = CFG()
+    r = _cfg_to_dict(base)
+
+    # 2) materialize dict views
+    run = _cfg_to_dict(runtime_cfg)
+    ckpt = ckpt_cfg_dict if isinstance(ckpt_cfg_dict, dict) else {}
+
+    # 3) apply precedence
     if prefer.lower() == "runtime":
-        for k, v in ckpt_cfg_dict.items():
-            if k not in r or r[k] is None:
-                r[k] = v
-    else:
-        for k, v in ckpt_cfg_dict.items():
-            r[k] = v
+        r.update(run)
+        for k, v in ckpt.items():
+            r.setdefault(k, v)
+    else:  # prefer ckpt
+        r.update(ckpt)
+        for k, v in run.items():
+            r.setdefault(k, v)
+
+    # 4) keep only known CFG fields
+    known_fields = CFG().__dict__.keys()
+    filtered = {k: r[k] for k in r.keys() if k in known_fields}
+
+    # 5) coerce tuple fields if YAML saved lists, etc.
     try:
-        return CFG(**r)
+        return CFG(**filtered)
     except TypeError:
-        known = {k: r[k] for k in r if k in CFG().__dict__}
-        return CFG(**known)
+        # simple list->tuple fix for tuple-typed fields
+        fixed = {}
+        for k, v in filtered.items():
+            dv = getattr(CFG(), k)
+            if isinstance(dv, tuple) and isinstance(v, list):
+                fixed[k] = tuple(v)
+            else:
+                fixed[k] = v
+        return CFG(**fixed)
 
 def gm_load(ckpt_path: Optional[str] = None,
             device: Optional[torch.device] = None,
