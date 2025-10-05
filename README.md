@@ -10,6 +10,8 @@ This project enhances vascular image segmentation and sequential tracing by comb
 
 <img width="1751" height="457" alt="image" src="https://github.com/user-attachments/assets/31b0cb3d-3be9-42ea-87e3-8cfbee7ceaba" />
 
+Refer (nnUNet/readme.md) for
+
 ### Step 1: Use the standard nnU-Net v2 workflow (same install, dataset layout, training, etc), with one extra flag during planning and preprocessing: -model.
 
 nnUNetv2_plan_and_preprocess -d 002 --verify_dataset_integrity -model unet_se
@@ -50,8 +52,19 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 
 ## Architectures overview
 
+
+###Modified nnUNet
+
 <img width="1467" height="788" alt="image" src="https://github.com/user-attachments/assets/5cbbc7c9-d8bb-4481-be07-6dd723e6f309" />
 
+### GNN model
+
+<img width="1663" height="538" alt="image" src="https://github.com/user-attachments/assets/c2f63003-f9e2-42f8-9b80-d5c04c0280bc" />
+
+
+### modified SeqSeg
+
+<img width="1625" height="858" alt="image" src="https://github.com/user-attachments/assets/78cd17be-a740-4da3-b04a-96ae29206eb5" />
 
 
 
