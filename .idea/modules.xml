@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/modified_nnunet_SeqSeg.iml" filepath="$PROJECT_DIR$/.idea/modified_nnunet_SeqSeg.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/CoronarySeqSeg.iml" filepath="$PROJECT_DIR$/.idea/CoronarySeqSeg.iml" />
     </modules>
   </component>
 </project>
