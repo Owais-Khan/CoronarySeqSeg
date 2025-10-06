@@ -8,49 +8,20 @@ from SeqSeg.seqseg.modules.centerline import post_process_centerline
 from SeqSeg.seqseg.modules.vtk_functions import write_vtk_polydata
 
 import SimpleITK as sitk
-from gnn_model.gnn_modules import gm_load, gm_predict_graph,save_predicted_graph_to_vtp
+from gnn_model.gnn_modules import gm_load, gm_predict_graph, save_predicted_graph_to_vtp
 import skfmm
 from seqseg_modules_modified.trace_centerline import trace_centerline
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial import cKDTree as KDTree
 import faulthandler, time, os, yaml, vtk
 
-
-
-class CFG:
-    # I/O
-
-    # ECC graph settidongs
-    knn_k: int = 12
-    knn_radius_mm: float = 6.0
-    edge_prob_thresh: float = 0.5
-
-    # Component cropping
-    top_k_components: int = 10
-    pad_mm = (0,0,0)
-    min_size_mm = (12.0, 12.0, 12.0)
-
-    # FMM/target selection
-    max_targets_per_comp: int = 25
-    min_target_sep_mm: float = 9.0
-    spur_len_min_mm: float = 9.0
-    prob_min: float = 0.6
-    prob_exp: float = 9
-
-    # Tracer limits (defaults; most are read from YAML)
-    MAX_STEP_SIZE: int = 10
-    MAX_STEPS_PER_COMPONENT: int = 220
-
-
-
-cfg = CFG()
-
-STEP_MM   = 0.5
-JUMP_MM   = 1.0
+STEP_MM = 0.5
+JUMP_MM = 1.0
 LEAK_FRAC = 0.05
 GRAD_FLOOR = 1e-6
-MAX_ITERS  = 4000
-TT_MARGIN  = 1e-6
+MAX_ITERS = 4000
+TT_MARGIN = 1e-6
+
 
 def create_directories(output_folder: str, write_samples: bool) -> None:
     base = Path(output_folder)
@@ -79,9 +50,9 @@ def _inside_frac_order(G: nx.Graph, img: sitk.Image, pos_key='pos', order=(2, 1,
             ok += 1
     return ok / max(len(nodes), 1)
 
+
 def attach_pos_idx_xyz(G: nx.Graph, img: sitk.Image, pos_key='pos',
                        try_orders=((2, 1, 0), (0, 1, 2))) -> Tuple[int, int, int]:
-
     best = max(try_orders, key=lambda ord_: _inside_frac_order(G, img, pos_key, ord_))
     for n in G.nodes():
         p = np.asarray(G.nodes[n].get(pos_key, [0, 0, 0]), float)
@@ -89,8 +60,10 @@ def attach_pos_idx_xyz(G: nx.Graph, img: sitk.Image, pos_key='pos',
             G.nodes[n]['pos_idx_xyz'] = p[list(best)]
     return best
 
+
 def _pad_vox(pad_mm, spacing_xyz):
     return np.ceil(np.asarray(pad_mm, float) / np.maximum(np.asarray(spacing_xyz, float), 1e-6)).astype(int)
+
 
 def bbox_from_graph_component(Gc: nx.Graph, img: sitk.Image,
                               pos_idx_key='pos_idx_xyz',
@@ -208,10 +181,13 @@ def _dedupe_by_mm(G: nx.Graph, cand: List[int], *, min_sep_mm: float = 5.0, pos_
     for n in cand:
         p = _pos_phys(G, n, pos_phys_key=pos_phys_key)
         if not kept:
-            kept.append(n); kept_pos.append(p); continue
+            kept.append(n);
+            kept_pos.append(p);
+            continue
         dmin = np.min([np.linalg.norm(p - q) for q in kept_pos])
         if dmin >= float(min_sep_mm):
-            kept.append(n); kept_pos.append(p)
+            kept.append(n);
+            kept_pos.append(p)
     return kept
 
 
@@ -225,7 +201,6 @@ def select_seed_and_targets_from_features(Gc: nx.Graph,
                                           length_key: str = 'length_mm',
                                           cost_key: str = 'length_cost',
                                           pos_phys_key: str = 'pos_phys') -> Tuple[Optional[int], List[int]]:
-
     if Gc.number_of_nodes() == 0:
         return None, []
 
@@ -251,10 +226,10 @@ def select_seed_and_targets_from_features(Gc: nx.Graph,
         ranked = ranked[:max_targets]
     return seed, ranked
 
-def graph_corridor_mask_zyx(Gc: nx.Graph, cropped_img: sitk.Image,
-                            start_xyz: Tuple[int,int,int], size_xyz: Tuple[int,int,int],
-                            pos_idx_key: str = 'pos_idx_xyz', radius_mm: float = 2.0) -> np.ndarray:
 
+def graph_corridor_mask_zyx(Gc: nx.Graph, cropped_img: sitk.Image,
+                            start_xyz: Tuple[int, int, int], size_xyz: Tuple[int, int, int],
+                            pos_idx_key: str = 'pos_idx_xyz', radius_mm: float = 2.0) -> np.ndarray:
     sz_zyx = np.array(cropped_img.GetSize(), int)[::-1]
     seeds = np.zeros(sz_zyx, np.uint8)  # Z,Y,X
     for n, d in Gc.nodes(data=True):
@@ -273,12 +248,13 @@ def graph_corridor_mask_zyx(Gc: nx.Graph, cropped_img: sitk.Image,
     return (dist_mm <= float(radius_mm))
 
 
-
 def _idx_from_phys(img: sitk.Image, p_phys_xyz: np.ndarray) -> np.ndarray:
     return np.array(img.TransformPhysicalPointToContinuousIndex(p_phys_xyz))[::-1]
 
+
 def _phys_from_idx(img: sitk.Image, cont_zyx: np.ndarray) -> np.ndarray:
     return np.array(img.TransformContinuousIndexToPhysicalPoint(cont_zyx[::-1].tolist()))
+
 
 def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
                        gradient_field: list[np.ndarray], reference_image: sitk.Image,
@@ -287,7 +263,7 @@ def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
                        graph_kd_phys: KDTree | None = None,  # <— NEW (optional)
                        graph_jump_mm: float = 1.5) -> list[np.ndarray]:
     path = [np.array(start_point_phys, float)]
-    cur  = np.array(start_point_phys, float)
+    cur = np.array(start_point_phys, float)
     spacing = np.array(reference_image.GetSpacing(), float)
     mean_sp = float(np.mean(spacing))
     step_idx = STEP_MM / mean_sp
@@ -299,9 +275,9 @@ def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
             break
 
         cur_zyx = _idx_from_phys(reference_image, cur)
-        gz = map_coordinates(gradient_field[0], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
-        gy = map_coordinates(gradient_field[1], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
-        gx = map_coordinates(gradient_field[2], cur_zyx.reshape(3,1), order=1, mode='nearest')[0]
+        gz = map_coordinates(gradient_field[0], cur_zyx.reshape(3, 1), order=1, mode='nearest')[0]
+        gy = map_coordinates(gradient_field[1], cur_zyx.reshape(3, 1), order=1, mode='nearest')[0]
+        gx = map_coordinates(gradient_field[2], cur_zyx.reshape(3, 1), order=1, mode='nearest')[0]
         g = np.array([gz, gy, gx], float)
         gnorm = float(np.linalg.norm(g))
 
@@ -309,20 +285,26 @@ def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
         if gnorm > GRAD_FLOOR:
             new_zyx = cur_zyx + (-g / gnorm) * step_idx
             if travel_time is None:
-                cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy()); moved = True
+                cur = _phys_from_idx(reference_image, new_zyx);
+                path.append(cur.copy());
+                moved = True
             else:
-                T_cur = float(map_coordinates(travel_time, cur_zyx.reshape(3,1),  order=1, mode='nearest')[0])
-                T_new = float(map_coordinates(travel_time, new_zyx.reshape(3,1), order=1, mode='nearest')[0])
+                T_cur = float(map_coordinates(travel_time, cur_zyx.reshape(3, 1), order=1, mode='nearest')[0])
+                T_new = float(map_coordinates(travel_time, new_zyx.reshape(3, 1), order=1, mode='nearest')[0])
                 if T_new <= T_cur - TT_MARGIN:
-                    cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy()); moved = True
+                    cur = _phys_from_idx(reference_image, new_zyx);
+                    path.append(cur.copy());
+                    moved = True
 
         if not moved:
             # 1) try a tiny jump toward the goal
             end_zyx = _idx_from_phys(reference_image, end_point_phys)
-            d = end_zyx - cur_zyx; dn = np.linalg.norm(d)
+            d = end_zyx - cur_zyx;
+            dn = np.linalg.norm(d)
             if dn > 1e-9:
                 new_zyx = cur_zyx + (d / dn) * jump_idx
-                cur = _phys_from_idx(reference_image, new_zyx); path.append(cur.copy())
+                cur = _phys_from_idx(reference_image, new_zyx);
+                path.append(cur.copy())
                 moved = True
 
         if not moved and graph_kd_phys is not None:
@@ -348,16 +330,17 @@ def backtrack_gradient(start_point_phys: np.ndarray, end_point_phys: np.ndarray,
 
 from scipy.ndimage import gaussian_filter
 
+
 def trace_centerline_fmm(vessel_mask_np: np.ndarray,
                          seed_coords_vox_zyx: np.ndarray,
                          target_coords_list_vox_zyx: list[np.ndarray],
                          reference_image: sitk.Image,
                          *,
-                         corridor_mask_zyx: np.ndarray | None = None,   # <— NEW
-                         graph_kd_phys: KDTree | None = None            # <— NEW
+                         corridor_mask_zyx: np.ndarray | None = None,  # <— NEW
+                         graph_kd_phys: KDTree | None = None  # <— NEW
                          ) -> nx.Graph:
     mask = vessel_mask_np.astype(bool)
-    edt  = distance_transform_edt(mask)
+    edt = distance_transform_edt(mask)
     speed = np.full_like(edt, 1e-8, dtype=float)
     if mask.any():
         med_in = float(np.median((edt + 1e-6)[mask]))
@@ -370,7 +353,7 @@ def trace_centerline_fmm(vessel_mask_np: np.ndarray,
     speed = gaussian_filter(speed, sigma=0.6)
 
     phi = np.ones_like(speed, float)
-    sz, sy, sx = [int(np.clip(v, 0, s-1)) for v, s in zip(seed_coords_vox_zyx, speed.shape)]
+    sz, sy, sx = [int(np.clip(v, 0, s - 1)) for v, s in zip(seed_coords_vox_zyx, speed.shape)]
     phi[sz, sy, sx] = -1.0
 
     travel_time = skfmm.travel_time(phi, speed=speed, dx=reference_image.GetSpacing()[::-1])
@@ -381,6 +364,7 @@ def trace_centerline_fmm(vessel_mask_np: np.ndarray,
                     for t in target_coords_list_vox_zyx]
 
     G, node_counter, node_map = nx.Graph(), 0, {}
+
     def add_node(p_phys_xyz: np.ndarray) -> int:
         nonlocal node_counter
         key = tuple(np.asarray(p_phys_xyz, float))
@@ -389,7 +373,8 @@ def trace_centerline_fmm(vessel_mask_np: np.ndarray,
         pos_vox_zyx = np.array(vox_xyz)[::-1]
         pos_vox_zyx = np.clip(pos_vox_zyx, 0, np.array(speed.shape) - 1).astype(int)
         G.add_node(node_counter, pos_phys=np.asarray(p_phys_xyz, float), pos=pos_vox_zyx)
-        node_map[key] = node_counter; node_counter += 1
+        node_map[key] = node_counter;
+        node_counter += 1
         return node_map[key]
 
     for t_phys in targets_phys:
@@ -426,14 +411,14 @@ def _edt_mm_from_seg(seg_img: sitk.Image) -> np.ndarray:
 
 
 def build_seqseg_centerline_polydata_from_graph(
-    G: nx.Graph,
-    seg_img: sitk.Image,
-    seed_node: Optional[int] = None,
-    target_nodes: Optional[List[int]] = None,
-    *,
-    weight_keys: Tuple[str, ...] = ("length_cost", "length_mm", "weight"),
-    dedupe_targets_mm: float = 5.0,
-    max_targets: Optional[int] = None,
+        G: nx.Graph,
+        seg_img: sitk.Image,
+        seed_node: Optional[int] = None,
+        target_nodes: Optional[List[int]] = None,
+        *,
+        weight_keys: Tuple[str, ...] = ("length_cost", "length_mm", "weight"),
+        dedupe_targets_mm: float = 5.0,
+        max_targets: Optional[int] = None,
 ) -> vtk.vtkPolyData:
     poly = vtk.vtkPolyData()
     if G.number_of_nodes() == 0:
@@ -472,10 +457,14 @@ def build_seqseg_centerline_polydata_from_graph(
     pts = vtk.vtkPoints()
     lines = vtk.vtkCellArray()
 
-    radii = vtk.vtkDoubleArray(); radii.SetName("MaximumInscribedSphereRadius")
-    radii_f = vtk.vtkDoubleArray(); radii_f.SetName("f")
-    gnode = vtk.vtkIntArray(); gnode.SetName("GlobalNodeID")
-    clid  = vtk.vtkIntArray(); clid.SetName("CenterlineId")
+    radii = vtk.vtkDoubleArray();
+    radii.SetName("MaximumInscribedSphereRadius")
+    radii_f = vtk.vtkDoubleArray();
+    radii_f.SetName("f")
+    gnode = vtk.vtkIntArray();
+    gnode.SetName("GlobalNodeID")
+    clid = vtk.vtkIntArray();
+    clid.SetName("CenterlineId")
 
     branch_id = 0
     for t in target_nodes:
@@ -524,13 +513,13 @@ def build_seqseg_centerline_polydata_from_graph(
 
 
 def export_seqseg_centerline_from_graph(
-    G: nx.Graph,
-    seg_img: sitk.Image,
-    out_vtp_path: str,
-    seed_node: Optional[int] = None,
-    target_nodes: Optional[List[int]] = None,
-    *,
-    clean_and_smooth: bool = True
+        G: nx.Graph,
+        seg_img: sitk.Image,
+        out_vtp_path: str,
+        seed_node: Optional[int] = None,
+        target_nodes: Optional[List[int]] = None,
+        *,
+        clean_and_smooth: bool = True
 ) -> vtk.vtkPolyData:
     poly = build_seqseg_centerline_polydata_from_graph(
         G, seg_img, seed_node=seed_node, target_nodes=target_nodes
@@ -543,6 +532,7 @@ def export_seqseg_centerline_from_graph(
     os.makedirs(os.path.dirname(out_vtp_path), exist_ok=True)
     write_vtk_polydata(poly, out_vtp_path)
     return poly
+
 
 def rebind_points_from_indices(G: nx.Graph, img: sitk.Image,
                                idx_key='pos_idx_xyz', out_key='point'):
@@ -571,7 +561,7 @@ def attach_edge_metrics(G: nx.Graph, prob_key='edge_prob', prob_exp: float = 1.5
         prob = float(e.get('prob', e.get(prob_key, 1.0)))
         e['length'] = L
         e['prob'] = prob
-        e['cost'] = L / max(prob, EPS)**prob_exp
+        e['cost'] = L / max(prob, EPS) ** prob_exp
 
 
 def inside_frac_phys(G: nx.Graph, img: sitk.Image, key='point', sample=1024) -> float:
@@ -612,6 +602,7 @@ import torch
 from nnUNet.nnunetv2.paths import nnUNet_raw, nnUNet_preprocessed, nnUNet_results
 from nnUNet.nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
+
 def parse_args():
     p = argparse.ArgumentParser("GNN model")
     p.add_argument("--output_dir", required=True, type=str,
@@ -631,9 +622,8 @@ def parse_args():
     p.add_argument("--dataset_id", type=str, help="Dataset id to initialize predictor")
     return p.parse_args()
 
+
 def main():
-
-
     faulthandler.enable()
     args = parse_args()
     t0 = time.time()
@@ -643,9 +633,9 @@ def main():
     gnn_cfg = os.path.join(args.gnn_folder, 'gnn_cfg.yaml')
 
     with open(seqseg_cfg, 'r') as f:
-        params_seqseg = yaml.safe_load(f)
+        params_seqseg = yaml.safe_load(f) or {}
     with open(gnn_cfg, 'r') as f:
-        params_gnn = yaml.safe_load(f)
+        params_gnn = yaml.safe_load(f) or {}
 
     img_format = args.img_ext
     seg_dir = args.pred_dir
@@ -654,14 +644,17 @@ def main():
     all_cases = [f.replace(img_format, "") for f in os.listdir(seg_dir) if f.endswith(img_format)]
 
     model, cfg_gnn, device, _ = gm_load(
-        ckpt_path=os.path.join(
-            args.gnn_folder,
-            "gnn_checkpoint.pt"
-        ),
-        runtime_cfg=params_gnn,
-        prefer_cfg='runtime'
+        ckpt_path=os.path.join(args.gnn_folder, "gnn_checkpoint.pt"),
+        cfg=params_gnn
     )
+
     model_tuple = (model, cfg_gnn, device, "gnn_checkpoint.pt")
+
+    node_min_spacing_mm = float(params_gnn["node_min_spacing_mm"]) if "node_min_spacing_mm" in params_gnn else None
+    knn_k = int(params_gnn.get("knn_k", 16))
+    knn_radius_mm = float(params_gnn.get("knn_radius_mm", 8.0))
+    edge_prob_thresh = float(params_gnn.get("edge_prob_thresh", 0.5))
+    top_k_components = int(params_gnn.get("top_k_components", 1))
 
     # SeqSeg model folder
     seqseg_model_folder = os.path.join(
@@ -682,7 +675,7 @@ def main():
 
     for case_id in all_cases:
         case_t0 = time.time()
-        print(f"\n{'='*60}\nProcessing case: {case_id}\n{'='*60}")
+        print(f"\n{'=' * 60}\nProcessing case: {case_id}\n{'=' * 60}")
         dir_output_case = os.path.join(OUTPUT_DIR, case_id)
         create_directories(dir_output_case, write_samples=True)
 
@@ -706,13 +699,14 @@ def main():
         G, dbg = gm_predict_graph(
             seg_img=segmentation_image, prob_img=None,
             model_tuple=model_tuple,
-            node_min_spacing_mm=float(getattr(params_gnn, "node_min_spacing_mm", 0.2)) if hasattr(params_gnn, "node_min_spacing_mm") else None,
-            knn_k=int(params_gnn.knn_k),
-            knn_radius_mm=float(params_gnn.knn_radius_mm),
-            edge_prob_thresh=float(params_gnn.edge_prob_thresh),
+            node_min_spacing_mm=node_min_spacing_mm,
+            knn_k=knn_k,
+            knn_radius_mm=knn_radius_mm,
+            edge_prob_thresh=edge_prob_thresh,
             use_adaptive_spacing=False,
             return_debug=True,
         )
+
         print("  Graph:", G.number_of_nodes(), "nodes,", G.number_of_edges(), "edges")
         try:
             save_predicted_graph_to_vtp(G, out_path=os.path.join(dir_output_case, f"graph_full_{case_id}.vtp"))
@@ -727,17 +721,26 @@ def main():
         inside_frac = _inside_frac_order(G, image_ref, pos_key='pos', order=order)
         print(f"  - graph→index order: {order}, inside_frac: {inside_frac:.3f}")
 
-        comps = largest_components(G, k=params_gnn.top_k_components, by='nodes')
+        comps = largest_components(G, k=top_k_components, by='nodes')
+
         print(f"  - Cropping from top {len(comps)} graph component(s)")
 
         # Global EDT in mm (ZYX) for radii
         seg_np_zyx = (sitk.GetArrayFromImage(segmentation_image) > 0).astype(np.uint8)
         edt_mm_zyx_global = distance_transform_edt(seg_np_zyx, sampling=segmentation_image.GetSpacing()[::-1])
 
+        pad_mm = tuple(params_seqseg.get("pad_mm", (4, 4, 4)))
+        min_size_mm = tuple(params_seqseg.get("min_size_mm", (12, 12, 12)))
+        prob_exp = float(params_seqseg.get("prob_exp", 1.5))
+        max_targets_per_comp = int(params_seqseg.get("max_targets_per_comp", 25))
+        spur_len_min_mm = float(params_seqseg.get("spur_len_min_mm", 2.0))
+        prob_min = float(params_seqseg.get("prob_min", 0.15))
+        min_target_sep_mm = float(params_seqseg.get("min_target_sep_mm", 5.0))
+
         for gi, Gc in enumerate(comps):
             roi = bbox_from_graph_component(
                 Gc, image_ref, pos_idx_key='pos_idx_xyz',
-                pad_mm=params_seqseg.pad_mm, min_size_mm=params_seqseg.min_size_mm
+                pad_mm=pad_mm, min_size_mm=min_size_mm
             )
             if roi is None:
                 print(f"  - comp {gi}: no points; skip.")
@@ -761,18 +764,18 @@ def main():
             # ---------- GRAPH NORMALIZATION (volumetric component) ----------
             rebind_points_from_indices(Gc, image_ref, idx_key='pos_idx_xyz', out_key='point')
             attach_radii_from_global_edt(Gc, edt_mm_zyx_global, idx_key='pos_idx_xyz')
-            attach_edge_metrics(Gc, prob_key='edge_prob', prob_exp=params_seqseg.prob_exp)
+            attach_edge_metrics(Gc, prob_key='edge_prob', prob_exp=prob_exp)
             print(f"[DBG inside] comp{gi} volumetric_graph inside_frac (cropped img): "
                   f"{inside_frac_phys(Gc, cropped_img, key='point'):.3f}")
 
             # ---- Seed/targets from graph features
             seed_node, target_nodes = select_seed_and_targets_from_features(
                 Gc,
-                max_targets=params_seqseg.max_targets_per_comp,
-                prob_exp=params_seqseg.prob_exp,
-                Lspur_min_mm=params_seqseg.spur_len_min_mm,
-                prob_min=params_seqseg.prob_min,
-                min_sep_mm=params_seqseg.min_target_sep_mm,
+                max_targets=max_targets_per_comp,
+                prob_exp=prob_exp,
+                Lspur_min_mm=spur_len_min_mm,
+                prob_min=prob_min,
+                min_sep_mm=min_target_sep_mm,
             )
             if seed_node is None or not target_nodes:
                 print("  - no valid seed/targets for this component; skipping")
@@ -867,7 +870,6 @@ def main():
                 start_seg=prev_prob_for_tracer
             )
 
-
             prev_prob = start_prob_global if start_prob_global is not None else blank_image(image_ref, sitk.sitkFloat32)
             curr_prob = sitk.Cast(assembly_segs.assembly, sitk.sitkFloat32)
             curr_prob.CopyInformation(prev_prob)
@@ -893,32 +895,28 @@ def main():
             else:
                 coverage_union = sitk.Or(coverage_union, sitk.Cast(largest_delta, sitk.sitkUInt8))
 
-        # ➌ After all components: write assembled volumes (case-level)
-        assembly_dir = os.path.join(dir_output_case, "assembly")
-        os.makedirs(assembly_dir, exist_ok=True)
+            # ➌ After all components: write assembled volumes (case-level)
+            assembly_dir = os.path.join(dir_output_case, "assembly")
+            os.makedirs(assembly_dir, exist_ok=True)
 
-        if start_prob_global is not None:
-            assembled_prob = start_prob_global
-            assembled_prob_path = os.path.join(assembly_dir, f"{case_id}_assembled_prob.nii.gz")
-            sitk.WriteImage(assembled_prob, assembled_prob_path)
-            print(f"[WRITE] assembled probability: {assembled_prob_path}")
+            if start_prob_global is not None:
+                assembled_prob = start_prob_global
+                assembled_prob_path = os.path.join(assembly_dir, f"{case_id}_assembled_prob.nii.gz")
+                sitk.WriteImage(assembled_prob, assembled_prob_path)
+                print(f"[WRITE] assembled probability: {assembled_prob_path}")
 
-            thr = ASSEMBLY_THRESH
-            assembled_mask = sitk.BinaryThreshold(
-                assembled_prob, lowerThreshold=thr, upperThreshold=1e9,
-                insideValue=1, outsideValue=0
-            )
-            assembled_mask.CopyInformation(assembled_prob)
-            assembled_mask_path = os.path.join(assembly_dir, f"{case_id}_assembled_mask_thr{thr:.2f}.nii.gz")
-            sitk.WriteImage(assembled_mask, assembled_mask_path)
-            print(f"[WRITE] assembled mask: {assembled_mask_path}")
+                thr = ASSEMBLY_THRESH
+                assembled_mask = sitk.BinaryThreshold(
+                    assembled_prob, lowerThreshold=thr, upperThreshold=1e9,
+                    insideValue=1, outsideValue=0
+                )
+                assembled_mask.CopyInformation(assembled_prob)
+                assembled_mask_path = os.path.join(assembly_dir, f"{case_id}_assembled_mask_thr{thr:.2f}.nii.gz")
+                sitk.WriteImage(assembled_mask, assembled_mask_path)
+                print(f"[WRITE] assembled mask: {assembled_mask_path}")
 
-            if coverage_union is not None:
-                coverage_mask_path = os.path.join(assembly_dir, f"{case_id}_assembly_coverage_mask.nii.gz")
-                sitk.WriteImage(coverage_union, coverage_mask_path)
-                print(f"[WRITE] coverage mask: {coverage_mask_path}")
-        else:
-            print("[WARN] No assembled volume produced for this case.")
+            else:
+                print("[WARN] No assembled volume produced for this case.")
 
         if WRITE_CENTERLINE_MERGE and len(merged_centerlines) > 0:
             app = vtk.vtkAppendPolyData()
@@ -940,7 +938,6 @@ def main():
 
 
 if __name__ == '__main__':
-
     main()
 
 

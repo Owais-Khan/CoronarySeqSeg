@@ -3,16 +3,16 @@ image_glob:  "*.nii.gz"
 
 # Node sampling (from prob/seg only)
 prob_threshold: 0.35
-voxel_subsample_zyx: (4,4,4)
+voxel_subsample_zyx: [3,3,3]
 include_shell_dilate_vox: 1
 
 # Band where outside nodes are allowed
-nms_radius_vox: (1,1,1)
+nms_radius_vox: [1,1,1]
 target_outside_ratio: 0.35  # cap outside fraction
 
 # Graph edges
-knn_k: 12
-knn_radius_mm: 6.0
+knn_k: 24
+knn_radius_mm: 12.0
 max_edge_len_mm: 8.0
 
 # Gap/bridge proposals
@@ -49,13 +49,13 @@ export_mst_preview_vtp: True
 export_predicted_vtp: True
 
 # Vessel belt (kept)
-belt_shells_mm: (0.8, 1.6, 2.4, -0.6)
+belt_shells_mm: [0.8, 1.6, 2.4, -0.6]
 belt_step_mm: 1.0
 belt_prob_max: 0.50
 belt_vesselness_min: 0.12
 belt_band_half_mm: 0.5
-belt_nms_vox: (1, 1, 1)
+belt_nms_vox: [1, 1, 1]
 belt_max_points: 20000
 
 # Checkpoint
-ckpt_name: str = "gnn_checkpoint.pt"
+ckpt_name: "gnn_checkpoint.pt"

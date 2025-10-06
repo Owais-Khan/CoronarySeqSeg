@@ -9,14 +9,14 @@ img_ext: ".nii.gz"
 fold: 5
 
 # gnn_model prediction settings
-knn_k: 12
-knn_radius_mm: 6.0
-edge_prob_thresh: 0.5
+knn_k: 24
+knn_radius_mm: 12.0
+edge_prob_thresh: 0.35
 
 # Component cropping
 top_k_components: 10
-pad_mm: (0,0,0)
-min_size_mm: (12.0, 12.0, 12.0)
+pad_mm: [0,0,0]
+min_size_mm: [12.0, 12.0, 12.0]
 
 # FMM/target selection
 max_targets_per_comp: 25
@@ -33,7 +33,7 @@ WEIGHTED_ASSEMBLY: true
 WEIGHT_TYPE: radius
 
 # --- ROI crop sizing ---
-VOLUME_SIZE_RATIO: 24.0
+VOLUME_SIZE_RATIO: 16.0
 MAGN_RADIUS: 1.2
 MIN_RES: 24
 
