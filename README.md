@@ -70,6 +70,3 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 
 
 
-
-
-
