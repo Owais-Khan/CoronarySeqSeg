@@ -245,10 +245,10 @@ def create_step_dict_from_nodes(
     curr_id: int,
     angle_change: Optional[float] = None
 ) -> Dict[str, Any]:
-    p0 = _to_np(G.nodes[prev_id]["point"])
-    p1 = _to_np(G.nodes[curr_id]["point"])
-    r0 = float(G.nodes[prev_id].get("radius", G.nodes[curr_id].get("radius", 0.0)))
-    r1 = float(G.nodes[curr_id].get("radius", r0))
+    p0 = _to_np(G.nodes[prev_id]["pos_phys"])
+    p1 = _to_np(G.nodes[curr_id]["pos_phys"])
+    r0 = float(G.nodes[prev_id].get("radius_mm", G.nodes[curr_id].get("radius_mm", 0.0)))
+    r1 = float(G.nodes[curr_id].get("radius_mm", r0))
     tangent = _unit(_vec(p0, p1))
 
     step_dict: Dict[str, Any] = {
@@ -281,11 +281,6 @@ class BuildCfg:
     eps_prob: float = 1e-6
 
 class VesselTree:
-    """
-    Graph-first VesselTree. No potential_branches/branches.
-    Maintains the 'vessel' as an ordered path (node ids) plus an edge set
-    and SeqSeg-style step dicts compatible with your existing pipeline.
-    """
 
     def __init__(
         self,
@@ -319,8 +314,8 @@ class VesselTree:
         self.id_not_traversed: Set[int] = set(self.G.nodes) - self.visited_nodes
 
         # Initialize a seed "step 0" so downstream code doesn’t choke.
-        seed_pt = _to_np(self.G.nodes[self.seed_id]["point"])
-        seed_r = float(self.G.nodes[self.seed_id].get("radius", 0.0))
+        seed_pt = _to_np(self.G.nodes[self.seed_id]["pos_phys"])
+        seed_r = float(self.G.nodes[self.seed_id].get("radius_mm", 0.0))
         seed_step = {
             "old point": seed_pt,
             "point": seed_pt,
@@ -338,12 +333,31 @@ class VesselTree:
             "centerline": None,
             "is_inside": False,
             "time": None,
-            "dice": None,
+            "dice": None
         }
         self.steps.append(seed_step)
 
         # Make sure edges have a usable weight for path finding.
         self._ensure_edge_costs()
+
+        # NEW: mark bifurcation / endpoint nodes on the provided centerline graph (Gcent)
+        if self.centerline_graph is not None and self.centerline_graph.number_of_nodes() > 0:
+            self._mark_centerline_bifurcations()
+
+    # ---------- NEW: annotate bifurcations on the centerline graph ----------
+    def _mark_centerline_bifurcations(self) -> None:
+        """
+        Stamp 'degree', 'is_bifurcation', and 'is_endpoint' attributes on nodes of self.centerline_graph.
+        - is_bifurcation = 1 if degree >= 3 else 0
+        - is_endpoint    = 1 if degree == 1 else 0
+        """
+        Gc = self.centerline_graph
+        deg_map = dict(Gc.degree())
+        for n in Gc.nodes():
+            d = int(deg_map.get(n, 0))
+            Gc.nodes[n]["degree"] = d
+            Gc.nodes[n]["is_bifurcation"] = 1 if d >= 3 else 0
+            Gc.nodes[n]["is_endpoint"]    = 1 if d == 1 else 0
 
     # ---------- internal helpers ----------
     def _edge_tuple(self, u: int, v: int) -> Tuple[int, int]:
@@ -353,8 +367,8 @@ class VesselTree:
         for u, v, data in self.G.edges(data=True):
             # If no geometric length, compute from node coordinates.
             if "length" not in data:
-                p0 = _to_np(self.G.nodes[u]["point"])
-                p1 = _to_np(self.G.nodes[v]["point"])
+                p0 = _to_np(self.G.nodes[u]["pos_phys"])
+                p1 = _to_np(self.G.nodes[v]["pos_phys"])
                 data["length"] = float(np.linalg.norm(p1 - p0))
             if self.cfg.use_prob_cost:
                 prob = float(data.get("prob", 1.0))
@@ -471,9 +485,9 @@ class VesselTree:
             neigh = next(iter(H.neighbors(n)), None)
             if neigh is None:
                 continue
-            p = _to_np(self.G.nodes[n]["point"])
-            q = _to_np(self.G.nodes[neigh]["point"])
-            r = float(self.G.nodes[n].get("radius", 0.0))
+            p = _to_np(self.G.nodes[n]["pos_phys"])
+            q = _to_np(self.G.nodes[neigh]["pos_phys"])
+            r = float(self.G.nodes[n].get("radius_mm", 0.0))
             t = _unit(p - q)
             ends.append(p + t * r)
         return ends
@@ -519,7 +533,7 @@ class VesselTree:
         vtk_points = vtk.vtkPoints()
         id_map: Dict[int, int] = {}
         for i, n in enumerate(H.nodes):
-            vtk_points.InsertNextPoint(_to_np(self.G.nodes[n]["point"]))
+            vtk_points.InsertNextPoint(_to_np(self.G.nodes[n]["pos_phys"]))
             id_map[n] = i
 
         # build lines from visited edges only (ensure undirected)
@@ -547,7 +561,7 @@ class VesselTree:
         end_set = set(self.endpoint_nodes())
 
         for n in H.nodes:
-            arr_radius.InsertNextValue(float(self.G.nodes[n].get("radius", 0.0)))
+            arr_radius.InsertNextValue(float(self.G.nodes[n].get("radius_mm", 0.0)))
             arr_id.InsertNextValue(int(n))
             arr_deg.InsertNextValue(int(deg_map[n]))
             arr_bif.InsertNextValue(1 if n in bif_set else 0)
@@ -564,20 +578,6 @@ class VesselTree:
         writer.SetInputData(poly)
         writer.Write()
 
-    def plot_radius_distribution(self, dir_output: str) -> None:
-        import matplotlib.pyplot as plt
-        radii = [float(self.G.nodes[n].get("radius", 0.0)) for n in self.path]
-        n_step = len(radii)
-        plt.hist(radii, bins=20)
-        plt.savefig(f"{dir_output}/radius_distribution.png")
-        plt.close()
-
-        plt.figure(figsize=(25, 5))
-        plt.plot(range(n_step), radii)
-        plt.xlabel("Step"); plt.ylabel("Radius"); plt.title("Radius Change")
-        plt.savefig(f"{dir_output}/radius_evolution.png")
-        plt.close()
-
     # ---------- caps / outlets ----------
     def calc_caps(self, global_assembly) -> List[np.ndarray]:
         """
@@ -591,8 +591,6 @@ class VesselTree:
         print(f"Number of outlets: {len(caps)}")
         self.caps = caps
         return caps
-
-
 
 
 def print_error(output_folder,

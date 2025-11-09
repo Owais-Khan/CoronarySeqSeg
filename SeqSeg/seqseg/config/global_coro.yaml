@@ -1,46 +1,52 @@
-# if we are tracing a segmentation or predicting a segmentation as we go
-# True if we have a segmentation, False if we are predicting
-SEGMENTATION: False # usually False
+# Predict segmentation as we go (no pre-made seg)
+SEGMENTATION: False
 
 DEBUG: False
-DEBUG_STEP: 100
+DEBUG_STEP: 0
 
-ANIMATION: True # to write out animation files
-ANIMATION_STEPS: 3 # write out animation every x steps
+# Disable animation/QA dumps while stabilizing
+ANIMATION: False
+ANIMATION_STEPS: 10
 
-RETRACE: False # retrace strategry
-TIME_ANALYSIS: False # if we want to write out how long each step take
+RETRACE: False
+TIME_ANALYSIS: False
 TREE_ANALYSIS: False
 
-VOLUME_SIZE_RATIO: 5.5 # default 5, 5.5 for coronaries, 4 for segs
-MAGN_RADIUS: 1
-ADD_RADIUS: 0.3
-MAX_PERC_ENLARGE: 0.33 # if percent of blood in a given volume goes above this, we try enlarging volume, default 0.33 for coronaries
-MIN_RADIUS: 0.3 # mm (keep in mm)
-MIN_RES: 5
-CENTERLINE_EXTRACTION_VMTK: False # if we want to extract centerline using VMTK
-TYPE_CENT: profileidlist #profileidlist # can also be profileidlist / pointlist
+# Windows & growth (coronaries)
+VOLUME_SIZE_RATIO: 15    # 7–8 is good; 8 is okay too
+MAGN_RADIUS: 1.75          # bigger first look
+ADD_RADIUS: 0.0
+MAX_PERC_ENLARGE: 0.5      # allow enlarging when lots of blood is present
 
-NR_CHANCES: 3
+MIN_RADIUS: 0.40           # allow thin starts
+MIN_RES: 1               # **was 32**; use 0.6–1.0 mm range
+CENTERLINE_EXTRACTION_VMTK: False
+TYPE_CENT: profileidlist
+
+NR_CHANCES: 4              # extra retries help when a cap fails
 NR_ALLOW_RETRACE_STEPS: 10
-PREVENT_RETRACE: False
+PREVENT_RETRACE: True
 SORT_NEXT: True
-MERGE_NEXT: False
+MERGE_NEXT: True
 
-ASSEMBLY_EVERY_N: 20 # add to assembly every N steps
-USE_BUFFER: True # buffer the assembly (so not to mess with retrace prevention)
-BUFFER_N: 20 # add to assembly steps buff_N steps ago
-WEIGHTED_ASSEMBLY: True # if assembly should be weighted
-WEIGHT_TYPE: gaussian # type of weighting for assembly
+# Assembly: write less often during stabilization
+ASSEMBLY_EVERY_N: 10
+USE_BUFFER: True
+BUFFER_N: 4
+WEIGHTED_ASSEMBLY: False   # simpler while debugging
+WEIGHT_TYPE: gaussian
 
-FORCEFUL_SIDEBRANCH: False
-FORCEFUL_SIDEBRANCH_MAGN_RADIUS: 1.1
+# Branching
+FORCEFUL_SIDEBRANCH: True
+FORCEFUL_SIDEBRANCH_MAGN_RADIUS: 1.6
 
-MEGA_SUBVOLUME: False # extract centerline from previous N steps, instead of just 1
-NR_MEGA_SUB: 3 # how many steps to assemble into mega subvolume
+# Early mega windows help first cap(s), but don’t let them explode
+MEGA_SUBVOLUME: True
+NR_MEGA_SUB: 2
 
-STOP_PRE: True # whether to stop tracing prematurely, if True then options below will be used
-STOP_RADIUS: 0.4 # (mm) 0.48 if radius goes below, stop tracing
-MAX_STEPS_BRANCH: 100 # max num of steps per branch, stop when reached
+# Stop before drifting to ROI borders
+STOP_PRE: True
+STOP_RADIUS: 0.40
+MAX_STEPS_BRANCH: 100
 
 RESTART_BRANCH: True
