@@ -5,7 +5,7 @@ from typing import List, Union, Tuple
 import numpy as np
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, save_json, isfile, maybe_mkdir_p
-from nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
+from nnunetv2.new_architectures.unet_modified import PlainConvUNet_modified
 
 from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_instancenorm
 
@@ -50,7 +50,7 @@ class ExperimentPlanner(object):
         self.anisotropy_threshold = ANISO_THRESHOLD
 
         self.UNet_base_num_features = 32
-        self.UNet_class = PlainConvUNet_sefc
+        self.UNet_class = PlainConvUNet_modified
         # the following two numbers are really arbitrary and were set to reproduce nnU-Net v1's configurations as
         # much as possible
         self.UNet_reference_val_3d = 560000000  # 455600128  550000000
@@ -278,7 +278,7 @@ class ExperimentPlanner(object):
         num_stages = len(pool_op_kernel_sizes)
 
         norm = get_matching_instancenorm(unet_conv_op)
-        network_class_name='PlainConvUNet_sefc'
+        network_class_name='PlainConvUNet_modified'
 
         architecture_kwargs = {
             'network_class_name': self.UNet_class.__module__ + '.' + self.UNet_class.__name__,

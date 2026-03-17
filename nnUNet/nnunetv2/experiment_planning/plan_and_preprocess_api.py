@@ -24,9 +24,9 @@ def select_experiment_planner(model:str):
     elif model=='base_nnunet':
         print(f'planning for {model}')
         from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
-    elif model=='unet_ConvLSTM':
+    elif model=='unet_modified':
         print(f'planning for {model}')
-        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_ConvLSTM import ExperimentPlanner
+        from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_modified import ExperimentPlanner
     elif model=='unet_se_bottleneck':
         print(f'planning for {model}')
         from nnunetv2.experiment_planning.experiment_planners.experiment_planner_PlainConv_se_bottleneck import ExperimentPlanner

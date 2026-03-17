@@ -1,44 +1,32 @@
 # Modified nnunet and Seqseg pipeline.
+Coronary artery segmentation from coronary computed tomography angiography (CCTA) is a prerequisite for non-invasive computer-aided diagnosis of coronary artery disease. However, this task remains challenging due to severe class imbalance, insufficient contrast, complex morphology and obscured vessel boundaries, often resulting in discontinuities, fragmentation and missed thin distal branches.
+This project presents an automatic Graph Neural Network (GNN)-guided Sequential Segmentation (SeqSeg) framework for reconstructing well-connected, smooth and accurate coronary artery trees from CCTA volumes. The framework comprises three components: a modified nnU-Net with architectural enhancements for improved semantic segmentation; a GNN-based topology refinement and centerline extraction module that enforces connectivity and topological accuracy through supervised learning; and a GNN-guided SeqSeg algorithm that combines local-crop segmentation with GNN-based topological priors for sequential tracing and reconstruction.
 
-
-This project enhances vascular image segmentation and sequential tracing by combining a modified nnU-Net with a GNN-guided SeqSeg pipeline. First, we introduce three vessel-specific nnU-Net models that surpass the baseline accuracy. Next, we train a graph neural network to produce topology-aware edge probabilities that build robust centerlines and guide SeqSeg during tracing. Finally, our modified SeqSeg utilizes the GNN’s edge predictions to improve traversal—bridging small gaps and suppressing false branches—resulting in higher-quality vessel segmentations and more reliable vessel trees.
-
-<img width="1520" height="945" alt="image" src="https://github.com/user-attachments/assets/361f8613-ba0f-4263-9c99-3163cfd320ed" />
-
+![img_4.png](img_4.png)
 
 ## Instructions
-
-<img width="1751" height="457" alt="image" src="https://github.com/user-attachments/assets/31b0cb3d-3be9-42ea-87e3-8cfbee7ceaba" />
 
 Refer (nnUNet/readme.md) for
 
 ### Step 1: Use the standard nnU-Net v2 workflow (same install, dataset layout, training, etc), with one extra flag during planning and preprocessing: -model.
 
-nnUNetv2_plan_and_preprocess -d 002 --verify_dataset_integrity -model unet_se
+nnUNetv2_plan_and_preprocess -d 002 --verify_dataset_integrity -model unet_modified
 
 Available model keys
-
-
-- unet_se
-- unet_se_bottleneck
-- unet_ConvLSTM
+- unet_modified
 
 Everything else (training, inference) follows the nnU-Net v2 commands.
-
 ### Step 2: GNN Model — Train / Predict Edges
-Run the GNN to produce topology-aware edge predictions that will guide SeqSeg.
-
+Run the GNN to produce topology-aware edge predictions that will guide Sequential segmentation.
 python gnn_model.py --gnn-folder ./runs/gnn --pred-out ./outputs/gnn_pred --dataset-id Dataset003_Coronary --fold 5
 
 Args
-
 - --gnn-folder : directory to save checkpoints & config
 - --pred-out : directory for GNN edge predictions
 - --dataset-id : your nnU-Net dataset id
 - --fold : fold number for the nnU-Net predictor
 
 ### Step 3: GNN guided SeqSeg
-
 python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs/seqseg --config_file ./configs/seqseg.yaml --dataset_id  Dataset003_Coronary --fold 5 --img_ext .nii.gz
 
 - --pred_dir : Directory to retrieve Segmentation images
@@ -49,24 +37,6 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 - --dataset_id : nnUNet train dataset-it
 - --fold : nnUNet fold
 - --img_ext : image extension
-
-## Architectures overview
-
-
-###Modified nnUNet
-
-<img width="1467" height="788" alt="image" src="https://github.com/user-attachments/assets/5cbbc7c9-d8bb-4481-be07-6dd723e6f309" />
-
-### GNN model
-
-<img width="1663" height="538" alt="image" src="https://github.com/user-attachments/assets/c2f63003-f9e2-42f8-9b80-d5c04c0280bc" />
-
-
-### modified SeqSeg
-
-<img width="1625" height="858" alt="image" src="https://github.com/user-attachments/assets/78cd17be-a740-4da3-b04a-96ae29206eb5" />
-
-
 
 
 

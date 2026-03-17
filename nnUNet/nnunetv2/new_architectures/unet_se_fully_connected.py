@@ -85,12 +85,11 @@ class ConvDropoutNormReLU(nn.Module):
         assert len(input_size) == len(self.stride), "just give the image size without color/feature channels or " \
                                                     "batch channel. Do not give input_size=(b, c, x, y(, z)). " \
                                                     "Give input_size=(x, y(, z))!"
-        output_size = [i // j for i, j in zip(input_size, self.stride)]  # we always do same padding
+        output_size = [i // j for i, j in zip(input_size, self.stride)]
         return np.prod([self.output_channels, *output_size], dtype=np.int64)
 
 
 
-# --- SEBlock3D Module ---
 class SEBlock3D(nn.Module):
     def __init__(self, channels, reduction_ratio=16, conv_op=nn.Conv3d):
         super().__init__()
@@ -137,23 +136,7 @@ class StackedConvBlocks(nn.Module):
                  nonlin_kwargs: dict = None,
                  nonlin_first: bool = False
                  ):
-        """
 
-        :param conv_op:
-        :param num_convs:
-        :param input_channels:
-        :param output_channels: can be int or a list/tuple of int. If list/tuple are provided, each entry is for
-        one conv. The length of the list/tuple must then naturally be num_convs
-        :param kernel_size:
-        :param initial_stride:
-        :param conv_bias:
-        :param norm_op:
-        :param norm_op_kwargs:
-        :param dropout_op:
-        :param dropout_op_kwargs:
-        :param nonlin:
-        :param nonlin_kwargs:
-        """
         super().__init__()
         if not isinstance(output_channels, (tuple, list)):
             output_channels = [output_channels] * num_convs
