@@ -13,63 +13,7 @@ from dynamic_network_architectures.building_blocks.helper import (
     convert_conv_op_to_dim
 )
 
-class ConvDropoutNormReLU(nn.Module):
-    def __init__(self,
-                 conv_op: Type[_ConvNd],
-                 input_channels: int,
-                 output_channels: int,
-                 kernel_size: Union[int, List[int], Tuple[int, ...]],
-                 stride: Union[int, List[int], Tuple[int, ...]],
-                 conv_bias: bool = False,
-                 norm_op: Union[None, Type[nn.Module]] = None,
-                 norm_op_kwargs: dict = None,
-                 dropout_op: Union[None, Type[_DropoutNd]] = None,
-                 dropout_op_kwargs: dict = None,
-                 nonlin: Union[None, Type[torch.nn.Module]] = None,
-                 nonlin_kwargs: dict = None,
-                 nonlin_first: bool = False):
-        super().__init__()
-        self.input_channels = input_channels
-        self.output_channels = output_channels
-        stride = maybe_convert_scalar_to_list(conv_op, stride)
-        self.stride = stride
-
-        kernel_size = maybe_convert_scalar_to_list(conv_op, kernel_size)
-        if norm_op_kwargs is None: norm_op_kwargs = {}
-        if nonlin_kwargs is None: nonlin_kwargs = {}
-
-        ops = []
-        self.conv = conv_op(
-            input_channels, output_channels, kernel_size, stride,
-            padding=[(k - 1) // 2 for k in kernel_size], dilation=1, bias=conv_bias
-        )
-        ops.append(self.conv)
-
-        if dropout_op is not None:
-            self.dropout = dropout_op(**(dropout_op_kwargs or {}))
-            ops.append(self.dropout)
-
-        if norm_op is not None:
-            self.norm = norm_op(output_channels, **norm_op_kwargs)
-            ops.append(self.norm)
-
-        if nonlin is not None:
-            self.nonlin = nonlin(**nonlin_kwargs)
-            ops.append(self.nonlin)
-
-        if nonlin_first and (norm_op is not None and nonlin is not None):
-            ops[-1], ops[-2] = ops[-2], ops[-1]
-
-        self.all_modules = nn.Sequential(*ops)
-
-    def forward(self, x): return self.all_modules(x)
-
-    def compute_conv_feature_map_size(self, input_size):
-        assert len(input_size) == len(self.stride)
-        # same padding → spatial size // stride
-        out_sz = [i // j for i, j in zip(input_size, self.stride)]
-        return np.prod([self.output_channels, *out_sz], dtype=np.int64)
-
+from dynamic_network_architectures.building_blocks.simple_conv_blocks import StackedConvBlocks,ConvDropoutNormReLU
 
 
 class SEBlock3D(nn.Module):
@@ -125,57 +69,6 @@ class SEBlock3D(nn.Module):
         scale_factors = y_excited.view(*scale_factors_shape)
 
         return x * scale_factors.expand_as(x)
-
-
-
-class StackedConvBlocks(nn.Module):
-    def __init__(self,
-                 num_convs: int,
-                 conv_op: Type[_ConvNd],
-                 input_channels: int,
-                 output_channels: Union[int, List[int], Tuple[int, ...]],
-                 kernel_size: Union[int, List[int], Tuple[int, ...]],
-                 initial_stride: Union[int, List[int], Tuple[int, ...]],
-                 conv_bias: bool = False,
-                 norm_op: Union[None, Type[nn.Module]] = None,
-                 norm_op_kwargs: dict = None,
-                 dropout_op: Union[None, Type[_DropoutNd]] = None,
-                 dropout_op_kwargs: dict = None,
-                 nonlin: Union[None, Type[torch.nn.Module]] = None,
-                 nonlin_kwargs: dict = None,
-                 nonlin_first: bool = False):
-        super().__init__()
-        if not isinstance(output_channels, (tuple, list)):
-            output_channels = [output_channels] * num_convs
-
-        blocks = [
-            ConvDropoutNormReLU(
-                conv_op, input_channels, output_channels[0], kernel_size, initial_stride,
-                conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
-                nonlin, nonlin_kwargs, nonlin_first
-            )
-        ]
-        for i in range(1, num_convs):
-            blocks.append(
-                ConvDropoutNormReLU(
-                    conv_op, output_channels[i-1], output_channels[i], kernel_size, 1,
-                    conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
-                    nonlin, nonlin_kwargs, nonlin_first
-                )
-            )
-        self.convs = nn.Sequential(*blocks)
-        self.output_channels = output_channels[-1]
-        self.initial_stride = maybe_convert_scalar_to_list(conv_op, initial_stride)
-
-    def forward(self, x): return self.convs(x)
-
-    def compute_conv_feature_map_size(self, input_size):
-        assert len(input_size) == len(self.initial_stride)
-        out = self.convs[0].compute_conv_feature_map_size(input_size)
-        sz = [i // j for i, j in zip(input_size, self.initial_stride)]
-        for b in self.convs[1:]:
-            out += b.compute_conv_feature_map_size(sz)
-        return out
 
 
 class ASPP(nn.Module):

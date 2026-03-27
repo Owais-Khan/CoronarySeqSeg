@@ -212,14 +212,6 @@ def voxel_sample_coords(mask: np.ndarray, step_zyx: Tuple[int, int, int]) -> np.
     keep = mask[grid[:, 0], grid[:, 1], grid[:, 2]]
     return np.ascontiguousarray(grid[keep])
 
-def nms_coords(coords_zyx: np.ndarray, radius_vox=(2, 2, 2)) -> np.ndarray:
-    if len(coords_zyx) == 0:
-        return coords_zyx
-    rz, ry, rx = [max(1, int(r)) for r in radius_vox]
-    key = (coords_zyx // np.array([rz, ry, rx], np.int64)).astype(np.int64)
-    _, uniq_idx = np.unique(key, axis=0, return_index=True)
-    return np.ascontiguousarray(coords_zyx[np.sort(uniq_idx)])
-
 
 #GNN Architecture ---------------------------------------------------------------------------------
 class gnn_model(nn.Module):
@@ -288,7 +280,6 @@ class gnn_model(nn.Module):
         edge_attr: torch.Tensor,
     ):
         pseudo = self._build_pseudo(edge_attr)
-
         z = x
         for conv, ln in zip(self.convs, self.norms):
             z_res = z
@@ -516,7 +507,7 @@ def build_nodes_from_seg(
     if coords_core.size == 0 and coords_skel.size == 0:
         return _empty()
 
-    coords = np.vstack([coords_core, coords_skel])
+    coords = np.vstack([coords_core, coords_skel])  #mark if coordinates belong to skeleton
     is_skel = np.zeros(coords.shape[0], dtype=bool)
     is_skel[coords_core.shape[0]:] = True
 
@@ -631,7 +622,7 @@ def build_edges(
             max_len_mm=float(_cfg_get(cfg, "gap_max_len_mm", 20.0)),
         )
 
-    if ei_np.shape[1] > 0:
+    if ei_np.shape[1] > 0:                                                      #degree of node
         deg = np.bincount(ei_np.reshape(-1), minlength=N).astype(np.int64)
     else:
         deg = np.zeros((N,), np.int64)
@@ -1363,7 +1354,6 @@ def make_graph_case_refine(img_p: str,
     if gt_graph_core.number_of_nodes() == 0:
         return None
 
-    # --- nodes from prediction (NO belt nodes) ---
     coords, rad_mm, pos_mm, tangents, is_skel = build_nodes_from_seg(
         seg_np=pred_np,
         ref_img=pred_img,
@@ -1548,6 +1538,7 @@ def train_one_epoch(
 
             bce_raw = F.binary_cross_entropy_with_logits(
                 edge_logits_s,
+                y_edge_s,
                 y_edge_s,
                 reduction="none",
                 pos_weight=pos_weight,

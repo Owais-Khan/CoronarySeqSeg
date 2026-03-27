@@ -72,13 +72,6 @@ def _nearest_node(kdt: Optional[KDTree], ids: List[int], point) -> Optional[int]
     _, idx = kdt.query(_to_np(point), k=1)
     return int(ids[int(idx)])
 
-def _snap_phys_inside(image: sitk.Image, p_xyz: np.ndarray) -> np.ndarray:
-    '''To clip coordinates within the image boundary'''
-    ci = np.array(image.TransformPhysicalPointToContinuousIndex(_phys_tuple(p_xyz)))
-    sz = np.array(image.GetSize(), int)
-    ci = np.clip(ci, 0, sz - 1)
-    return np.array(image.TransformContinuousIndexToPhysicalPoint(tuple(ci.tolist())))
-
 def _norm_vec(x: np.ndarray) -> np.ndarray:
     if x.size == 0:
         return x
@@ -946,8 +939,6 @@ def trace_centerline(
                 print(
                     f"[STEP] local crop centerline, score={float(cl_sc[0]) if cl_sc.size>0 else 0:.3f}"
                 )
-
-
 
             if (not picked) or nxt_p is None or centerline_poly is None:
                 u, v, poly_uv = _choose_graph_step_node(

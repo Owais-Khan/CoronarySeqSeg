@@ -5,7 +5,7 @@ from typing import Union
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.new_architectures.unet_se import PlainConvUNet_se
 from nnunetv2.new_architectures.unet_se_fully_connected import PlainConvUNet_sefc
-from nnunetv2.new_architectures.unet_ConvLSTM import PlainConvUNet_ConvLSTM
+from nnunetv2.new_architectures.unet_modified import PlainConvUNet_modified
 from nnunetv2.new_architectures.unet_se_with_bottleneck import PlainConvUNet_se_bottleneck
 from batchgenerators.utilities.file_and_folder_operations import join
 
@@ -15,8 +15,8 @@ def import_new_architecture(model: str):
         network = PlainConvUNet_se
     elif model == 'unet_se_fully_connected':
         network = PlainConvUNet_sefc
-    elif model == 'unet_ConvLSTM':
-        network = PlainConvUNet_ConvLSTM
+    elif model == 'unet_modified':
+        network = PlainConvUNet_modified
     elif model == 'unet_se_with_bottleneck':
         network = PlainConvUNet_se_bottleneck
     else:
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     import torch
 
     model = get_network_from_plans(
-        arch_class_name="nnunetv2.new_architectures.unet_ConvLSTM.PlainConvUNet_ConvLSTM",
+        arch_class_name="nnunetv2.new_architectures.unet_modified.PlainConvUNet_modified",
         arch_kwargs={
             "n_stages": 7,
             "features_per_stage": [
