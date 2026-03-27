@@ -1,8 +1,9 @@
-# Modified nnunet and Seqseg pipeline.
+# GNN-guided SeqSeg framework with modified nnU-Net for coronary artery tracing and reconstruction
 Coronary artery segmentation from coronary computed tomography angiography (CCTA) is a prerequisite for non-invasive computer-aided diagnosis of coronary artery disease. However, this task remains challenging due to severe class imbalance, insufficient contrast, complex morphology and obscured vessel boundaries, often resulting in discontinuities, fragmentation and missed thin distal branches.
 This project presents an automatic Graph Neural Network (GNN)-guided Sequential Segmentation (SeqSeg) framework for reconstructing well-connected, smooth and accurate coronary artery trees from CCTA volumes. The framework comprises three components: a modified nnU-Net with architectural enhancements for improved semantic segmentation; a GNN-based topology refinement and centerline extraction module that enforces connectivity and topological accuracy through supervised learning; and a GNN-guided SeqSeg algorithm that combines local-crop segmentation with GNN-based topological priors for sequential tracing and reconstruction.
 
-![img_4.png](img_4.png)
+<img width="927" height="871" alt="image" src="https://github.com/user-attachments/assets/44db95db-2b07-413f-ac7f-2c255c091bdf" />
+
 
 ## Instructions
 
@@ -37,6 +38,14 @@ python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs
 - --dataset_id : nnUNet train dataset-it
 - --fold : nnUNet fold
 - --img_ext : image extension
+
+### modified nnU-Net
+<img width="687" height="498" alt="image" src="https://github.com/user-attachments/assets/e499c05c-bddf-45ef-a49f-600f02608e6a" />
+
+### GNN-guided SeqSeg
+<img width="923" height="785" alt="image" src="https://github.com/user-attachments/assets/900ac27d-ac0d-405a-8e06-15aedd824ef6" />
+
+
 
 
 
