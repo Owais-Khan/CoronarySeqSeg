@@ -11,7 +11,7 @@ Refer (nnUNet/readme.md) for
 
 ### Step 1: Use the standard nnU-Net v2 workflow (same install, dataset layout, training, etc), with one extra flag during planning and preprocessing: -model.
 
-nnUNetv2_plan_and_preprocess -d 002 --verify_dataset_integrity -model unet_modified
+Ex: nnUNetv2_plan_and_preprocess -d 002 --verify_dataset_integrity -model unet_modified
 
 Available model keys
 - unet_modified
@@ -19,7 +19,8 @@ Available model keys
 Everything else (training, inference) follows the nnU-Net v2 commands.
 ### Step 2: GNN Model — Train / Predict Edges
 Run the GNN to produce topology-aware edge predictions that will guide Sequential segmentation.
-python gnn_model.py --gnn-folder ./runs/gnn --pred-out ./outputs/gnn_pred --dataset-id Dataset003_Coronary --fold 5
+
+Ex: python gnn_model.py --gnn-folder ./runs/gnn --pred-out ./outputs/gnn_pred --dataset-id Dataset003_Coronary --fold 5
 
 Args
 - --gnn-folder : directory to save checkpoints & config
@@ -28,7 +29,8 @@ Args
 - --fold : fold number for the nnU-Net predictor
 
 ### Step 3: GNN guided SeqSeg
-python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs/seqseg --config_file ./configs/seqseg.yaml --dataset_id  Dataset003_Coronary --fold 5 --img_ext .nii.gz
+
+Ex: python gnn_based_seqseg.py --data_dir /path/to/nnUNet_raw --output_dir ./outputs/seqseg --config_file ./configs/seqseg.yaml --dataset_id  Dataset003_Coronary --fold 5 --img_ext .nii.gz
 
 - --pred_dir : Directory to retrieve Segmentation images
 - --data_dir : Directory to retrieve raw images
